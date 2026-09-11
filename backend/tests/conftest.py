@@ -30,6 +30,7 @@ L1 单元须小于 5 秒（pre-commit 门禁）。
 """
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 
 import pytest
@@ -39,6 +40,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import app.models  # noqa: F401  必须导入：确保 Base.metadata 完整（建表与迁移依赖）
+from app.core.db import json_serializer
 from app.models.base import Base
 
 
@@ -74,6 +76,12 @@ def engine() -> Iterator[Engine]:
         poolclass=StaticPool,
         connect_args={"check_same_thread": False},
         future=True,
+        # JSON 列的序列化口径与生产**必须一致**：`test_linkage.py` 断言的是存储形态
+        # （键有序、中文不转义），两边的序列化器不同就等于在测另一套配置。
+        # 这里与 db.py 的 PRAGMA 处理不同 —— 那一处不能复用（它会一并开 WAL），
+        # 而序列化口径本就是同一件事，复用才有意义。
+        json_serializer=json_serializer,
+        json_deserializer=json.loads,
     )
     event.listen(eng, "connect", _enable_foreign_keys)
     event.listen(eng, "connect", _disable_pysqlite_implicit_begin)

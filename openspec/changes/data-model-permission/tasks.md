@@ -63,12 +63,51 @@
 
 ## 3. 衔接链（`26` 附录A 的 C 组 + `AisleCap`，5 实体）
 
-- [ ] 3.1 `ImportSession`（`lock_version` 与业务版本**分列**、`receipt_json`、`status` 限 8 值）；验证：`tests/models/test_linkage.py` 断言两列不共用，且非法 `import_status` 被拒
-- [ ] 3.2 `Snapshot`（`snapshot_time` 数据时点、`version_no`、`cap_snapshot_json`；追加式）；验证：断言两次写入产生两行，旧行可读（spec `data-model`「不可变快照基线」）
-- [ ] 3.3 `InventoryItem`（唯一键 = 库位号 + 批号 + 料号）；验证：同组合第二条写入被唯一约束拒绝
-- [ ] 3.4 `AisleCap`（`snapshot_id` 外键、`cap_total` / `cap_reserved` / `cap_usable`、`is_near_station`）；验证：断言 `snapshot_id` 指向不存在的快照时写入被拒
-- [ ] 3.5 `CapAlert`（`snapshot_id` 与 `ledger_txn_id` 两可空外键 + `CHECK` 恰好一个非空、`alert_kind` 局部值域、`handled`）；验证：`tests/logic/test_cap_alert.py` 断言「两个都空」「两个都非空」均被 CHECK 拒绝，「恰好一个」通过
-- [ ] 3.6 为本组生成迁移；验证：`alembic upgrade head` 后 5 张表存在，`autogenerate` 空 diff
+- [x] 3.1 `ImportSession`（`lock_version` 与业务版本**分列**、`receipt_json`、`status` 限 8 值）；验证：`tests/models/test_linkage.py` 断言两列不共用，且非法 `import_status` 被拒
+      （「业务版本」列取 16 §3.3「分流去向：快照 → cap 基线版本号」，落为 `snapshot_version_no`，
+      **可空**：会话可在建基准前 `FAILED`/`DISCARDED`，权威值仍在 `Snapshot.version_no`。
+      `lock_version` 直接进 §1 的 `app/core/concurrency.py` 守卫，用例同时证明推进乐观锁不碰业务版本列。
+      `status` 按 D3 两层各一条用例（8 值全可写 + 非法值两层各拒一次）。
+      另三处处置：① `import_batch_no` **不加唯一约束** —— 16 §3.1 允许 `FAILED → DRAFT` 重新校验再导入，
+      重试即新批次，加唯一约束会在重试路径上误伤；② 时间戳按「解析起止 + 里程碑」分列
+      （`validating_at`/`validated_at`/`imported_at`/`baselined_at`）—— design.md 性能目标表要求
+      「记录解析起止时间以支撑解析 ≤5min/文件 的 SLA」，16 §3.3 另给四个里程碑；
+      ③ 数据时点用 DATETIME 而非 DATE（16 A.1 的「库存记录时间」是日期时间，存 DATE 会静默截断时刻））
+- [x] 3.2 `Snapshot`（`snapshot_time` 数据时点、`version_no`、`cap_snapshot_json`；追加式）；验证：断言两次写入产生两行，旧行可读（spec `data-model`「不可变快照基线」）
+      （判据取「旧行仍带着它那一刻的值可读」而非「有两行」—— 追加式的意义在供追溯与回滚。
+      另断言表上**没有** `updated_at`：这是「只 INSERT 不 UPDATE」在表形状上仅剩的可验事实，
+      真正的写入约束在阶段四的 cap 计算层。`version_no` 不存 17 §10.5 的时间戳串（D1：那是展示形状））
+- [x] 3.3 `InventoryItem`（唯一键 = 库位号 + 批号 + 料号）；验证：同组合第二条写入被唯一约束拒绝
+      （唯一键 = `warehouse_id` + `snapshot_id` + 库位号 + 批号 + 料号：唯一是**一份快照内**唯一，
+      换快照必须能再写一行，否则版本化追溯与趋势分析无从谈起。库位号 6 位文本 + `qty > 0`
+      （16 A.1 的校验规则）两条 CHECK；`item_status` **不建 CHECK** —— 取值以导出为准、
+      由 `FieldMappingConfig` 归一（design.md Open Questions / 17 §9⑪）。
+      `zone` / `production_date` 保留可空：17 §3.3 列了、16 A.1 模版已移除，是**文档冲突**，登记在 9.4c①。
+      **不建**指向 `locations`/`batches`/`materials` 的外键，理由见下条）
+- [x] 3.4 `AisleCap`（`snapshot_id` 外键、`cap_total` / `cap_reserved` / `cap_usable`、`is_near_station`）；验证：断言 `snapshot_id` 指向不存在的快照时写入被拒
+      （唯一约束 `(warehouse_id, snapshot_id, aisle_no)` **同时是** design.md 性能目标表要的 cap 查询索引
+      （SLA ≤100ms），列序被用例钉住，不另建重复索引。三列 cap **不落算术 CHECK**（D5）：
+      漂移校正会以快照重算值改写同一行（16 §6.4），写死的等式会让校正写不进去 —— 故另有 `updated_at`。
+      与 `InventoryItem` 一并不建指向主数据的外键：快照必须能记录「源文件里有、主数据还没建」的行
+      （16 A.5 #4 把料号匹配列为**校验规则**而非落库前置），而巷道/库位又由快照派生（16 A.4）——
+      反向建键即形成循环依赖）
+- [x] 3.5 `CapAlert`（`snapshot_id` 与 `ledger_txn_id` 两可空外键 + `CHECK` 恰好一个非空、`alert_kind` 局部值域、`handled`）；验证：`tests/logic/test_cap_alert.py` 断言「两个都空」「两个都非空」均被 CHECK 拒绝，「恰好一个」通过
+      （四类取值按 16 §6.5 的中文原文存（`负cap`/`超总格`/`增量失败`/`漂移超阈值`）—— 它们会直接出现在
+      回执与 `/api/cap/alerts` 的「告警项」里，翻成代号只多一层映射点；D2 已把该值域归为实体局部，
+      故不进 `enums.py`，并有用例断言它不在共享登记表里。用例放 `tests/logic/` 而非 `tests/models/`：
+      「恰好一个来源」是 16 §6.5 四类异常在本模型里的落点，属口径判定。
+      **`ledger_txn_id` 本阶段无外键**：D5 要求它是外键，但目标表 `ledgers` 属作业链 §4，
+      声明后 SQLAlchemy 编译 DDL 即抛 `NoReferencedTableError`，本组建表与测试全跑不起来 ——
+      由 §4 用 `batch_alter_table` 补，登记在 9.4c②）
+- [x] 3.6 为本组生成迁移；验证：`alembic upgrade head` 后 5 张表存在，`autogenerate` 空 diff
+      （迁移 `2c10a7d2b5bf`，`autogenerate` 生成、未手改 DDL；`alembic check` 报
+      「No new upgrade operations detected」。本组**先把空 diff 用例跑成红的再生成迁移** ——
+      D8 那条「模型改动必带同 commit 迁移」的闸门就是这样起作用的。
+      另按 D4 给两个引擎（生产 `app/core/db.py` 与测试 `tests/conftest.py`）配了
+      `json_serializer` / `json_deserializer`：键排序 + `ensure_ascii=False`，使库里的 JSON 文本
+      只有一种字节表示、中文不转义 —— 两条都用例钉住（`test_json_columns_are_stored_canonically`）；
+      其中「原生 SQL 读 JSON 列拿到的是字符串、ORM 拿到的是 dict」也一并断言，
+      避免今后把两种读法混为一谈）
 
 ## 4. 作业链（`26` 附录A 的 D 组，5 实体）
 
@@ -126,4 +165,11 @@
       ② `Location.status` 与 `Batch.status` 的取值域 —— 全文唯一候选是 `item_status`（源数据驱动），但**没有任何原文把二者等同**，故按文本存、不建 CHECK，待与业务方确认；
       ③ `Material.units_per_carton` / `cartons_per_pallet` 的**单位** —— 文档只有样本串「PET500茉莉柚茶15入纸箱（广饮溯源版）102/板」，未说明「102/板」的计量单位是箱还是别的，「箱规用于数量→板数折算」的具体换算亦未给全（`17` §2.3 只说「按单厂换算规则内置」）；
       ④ `Aisle.total_cells` 在巷道主数据到位前的**近似值不标注来源** —— `16` §6.1 要求「在推荐理由中标注'容量基于快照近似'」，但 `Aisle` 表没有承载该标注的列，阶段四实现 cap 计算时需决定标注落在哪（该列？`AisleCap`？还是理由 JSON）
+- [ ] 9.4c **§3 暴露的口径待确认项**（同样只记录、不擅自补设计）：
+      ① `InventoryItem.zone` / `production_date` 的**文档冲突** —— `17` §3.3 列了这两列，而 `16` A.1 的 INV 模版已移除它们（原文「缺号为模版中已移除的字段（库区号、生产日期不再需要）」）。本阶段按 17 保留列、按 A.1 置可空。若确认不再需要应改 `17` 后删列；若仍需要 `zone`，须定其来源 —— `14` §3.4 把「库区」列为**可行巷道集**的匹配条件之一，长期为空会让该条件静默失效；
+      ② `CapAlert.ledger_txn_id` 的**外键待 §4 补** —— 本阶段无外键（目标表 `ledgers` 属作业链）。§4 落地 `ledgers` 后须用 `op.batch_alter_table("cap_alerts")` 加外键（SQLite 改约束只能 batch 重建），并同步收紧 `tests/logic/test_cap_alert.py` 中「两个都非空」用例（届时先撞外键而非 CHECK，断言应从「抛 IntegrityError」改为「抛的是 CHECK 不是外键」）；
+      ③ `ImportSession` 的「业务版本」口径 —— spec 要求它与乐观锁分列，而 `17` §3.1 没有给 `ImportSession` 的 `version_no`；本实现取 `16` §3.3「分流去向：快照 → cap 基线版本号」落为 `snapshot_version_no`。若评审认为该值只应活在 `receipt_json` 里（D4），删列即可 —— 但那样 spec 的这条场景要一并改；
+      ④ `ImportSession.session_no` 与 `import_batch_no` 是否同值 —— `17` §3.1 与 `16` §3.3 都并列列了「导入会话 ID」与「批次号」，未说差异；本阶段按「会话可重试（`FAILED → DRAFT`）→ 一批次一会话、可多对一」处置（故批次号不唯一）。若确认一会话一批次，应加唯一约束；
+      ⑤ `InventoryItem` 是否要为 16 A.4 的**解析时派生字段**（巷道、占用格数）落列 —— 该表只给了派生逻辑与时机，没给存储口径，`17` §3.3 的字段表也没有。本阶段不落列：占用格数的「板-格」换算规则属 `CapacityConfig`（任务 §6，实体尚未建模），口径未定前连列类型都只能猜。阶段四按实际查询计划定（cap 聚合、同物料跨巷道 是否需要列级索引）；
+      ⑥ `ImportSession.files_json` 超出 D4 的 JSON 映射表 —— D4 只映射 `17` §10 的 6 类结构，而 `17` §3.1 / `16` §3.3 要求三类文件清单（含**校验和**，是 16 §11.5 判重的依据）在库。本阶段按实体章节落列，若评审要求严格对齐 D4，需补 D4 或改述
 - [ ] 9.5 收尾：分支 `phase-2/data-model-permission` 以 `--no-ff` 合并 `main` 并打 `v0.2.0`；验证：`git tag | grep v0.2.0` 命中，且工作区干净
