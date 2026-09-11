@@ -494,7 +494,12 @@
       ④ **`role` 变更不即时生效** —— 中间件按 13 §6.2 逐字「从凭据解析 user_id、role」取凭据里的 `role`，
       而 `status` 是回查库的（§8.3 只给了 `status` 的回查依据）。于是在 8 小时有效期内，
       管理员改了某人的角色，旧凭据仍按旧角色判定（降权不即时）。**待决**：是否把 `role` 也改为回查
-      （与 `status` 对称，代价是每请求多读一列），或确认「角色变更后须重新登录」并写进 13 §6.2
+      （与 `status` 对称，代价是每请求多读一列），或确认「角色变更后须重新登录」并写进 13 §6.2；
+      ⑤ **`hash_password` 的超长口令错误没有 HTTP 落点** —— 它按设计抛裸 `ValueError`（13 号未规定
+      口令长度上限，本阶段取 bcrypt 的 72 字节硬上限，见 `security.py` 的三条开发阶段决策第 2 条），
+      但 `ValueError` 不是 `DomainError`，将来接上「账号开通 / 改密」端点时它会变成 500 而不是 422。
+      **待决**：给 `ValueError` 加一层领域化（改抛 `ValidationBlocked`），或在端点层先校验长度 ——
+      后者意味着同一个上限写在两处，倾向前者；本阶段没有调用方（只有种子与测试），故不处置
 - [ ] 9.4h **§8 暴露的标识符口径待确认项**（同样只记录、不擅自补设计）：
       ① **配置页 5 个子模块的 ASCII 标识符** —— `13` §2.1（config 行）与 `22` §2.1 ⑦ 都只给了中文名
       （导入模板 / cap 口径 / 评分因子权重 / 近站台预留比例 / 对话指令词），标识符留给实现。
@@ -530,5 +535,58 @@
       marker 打 `-m "not migrations"`）—— 一次就能腾出 ~1.6s，且**不损失任何断言**；
       ② 把门禁从「跑整个 `tests/`」改成「跑 `-m "model or api or logic"` 的子集」；
       ③ 最后才考虑放宽 5 秒（这会削弱门禁本身的意义，需先改 `00` §4.3）。
-      **本阶段不动**：余量仍在，且现在改门禁口径会与「阶段二只做数据模型与权限」的范围冲突
+      **本阶段不动**：余量仍在，且现在改门禁口径会与「阶段二只做数据模型与权限」的范围冲突。
+      **9.4k 修完后复测（2026-09-11）**：**546 例**，pytest 自报 **4.37 / 4.37 / 4.44s**（三次），
+      比修复前只多约 0.1s —— 新增的 32 例几乎全是纯函数与复用夹具的用例，不建库不哈希。
+      **但两种口径要分清**：`00` §4.3 只写了「<5 秒」，没写从哪一刻开始计时。
+      pytest 自报的 4.4s **不含解释器启动与插件/conftest 导入**（SQLAlchemy / FastAPI / Alembic），
+      而那一段实测约 2.4s —— 开发者在提交时实际等的是**墙钟 ~7.1s**（`time python -m pytest tests`，
+      连跑三次一致）。也就是说：按 pytest 口径余量约 12%，按墙钟口径**已超 40%**。
+      这不改变 9.4j 的结论与杠杆序（① 移出 `test_migrations.py` 在两种口径下都腾出 ~1.6s），
+      但「余量 14%」这个说法只在 pytest 口径下成立，**登记以备裁决**
+- [x] 9.4k **合并前两轴代码评审（Standards + Spec）发现的问题（已修，2026-09-11）**：fixed point = `main`，
+      16 个提交，两轴各一个子代理并行。**每条都先对着代码 / 设计文档复核才动手** —— 复核推翻了 4 条
+      （`db.py` 的 `receipt_json`「不存在」（实际在 `linkage.py:120`）、`env.py` docstring「与代码矛盾」
+      （误读了「两个入口」，但仍顺手把措辞改精确）、`seed_dev.py` 的 8×`_seed_*` 重复（既有约定，
+      各表业务键不同，不改）、`create_session_token` 用原始类型形参（线上格式本就是字符串））。
+      **真问题 9 条，全部修掉**：
+      ① `security.py` 的失效交叉引用 —— 它指着 `app/api/middleware.py` 里一个**已被删掉**的 TODO（`0274fe3`），
+      注释把读者指向不存在的东西；
+      ② **401 同形从「两处各自写对」变成「同一段代码」** —— 中间件在异常处理器之外（拿不到处理器那条路径），
+      原来自手拼 dict，与登录端点的 401 只是「当前恰好相同」。抽出 `errors.error_body(exc)`，
+      处理器与 `middleware._unauthorized` 都调它，并由 `tests/logic/test_errors.py` 的 **AST 守卫**
+      钉住（`_unauthorized` 必须调 `error_body`，且 `middleware.py` 里不得再出现字面量 `"unauthenticated"`）；
+      ③ 中间件改用 `deps.session_factory(request)`，不再直接读 `request.app.state.session_factory`
+      —— 同一个属性两种读法正是 `deps.py` 模块 docstring 警告的那种漂移；
+      ④ **凭据 claim 只查「都在」不查「类型对不对」**（实测三条路径，没有一条是拒绝）：
+      `user_id` 为 `{}` / `[1,2]` → `session.get()` 抛 `InvalidRequestError` → **500**；
+      `exp` 为 `"abc"` / `null` / `{}` → 与 `moment.timestamp()` 比较抛 `TypeError` → **500**；
+      `exp` 为 `1e400`（Python 的 json 往返成 `inf`）→ **永不过期**；`True` 当 `user_id` 会命中主键 1
+      （bool 是 int 子类）。已加 `_CLAIM_TYPES`（并单独排除 bool），`create_session_token` 的
+      `user_id` 形参同步收窄为 `int`（自己签的凭据自己得校验得过）；
+      ⑤ 中间件把 `role` **转成 `Role` 成员**再放进 `request.state`（未知取值 → 401）——
+      原样放字符串会让 `permissions.check` 的 `isinstance` 守卫在每个请求上抛 `TypeError`，
+      把 401 变成 500（守卫是 §8.6 为 `str` 枚举的 hash 陷阱加的，两处必须配套）；
+      ⑥ 删掉白名单的 `/docs/` **前缀**规则（13 §6.1 是**恰好四条**）—— 查证 `/docs` 页面
+      不请求任何本站子路径（JS/CSS 走 CDN，`/docs/oauth2-redirect` 只在声明 oauth2 方案时才被取）；
+      ⑦ `deps.py` docstring 声称有个 `require(resource, action)` 挂载点 —— 它**不存在**，
+      已改为写明「第 2 层没有依赖，D9 不做端点级鉴权，且不预置空壳」；
+      ⑧ `load_account` 的 docstring 说「非整数 id 不会抛错」—— **是错的**（`{}` 会抛），
+      签名已收窄为 `int`，并写明类型保证来自 `decode_session_token`（校验只在一处）；
+      ⑨ **软删除全表扫描断言** —— 三条分组 `test_no_soft_delete_columns` 只覆盖自己那组，
+      配置/对话/KPI/账号共 **7 张表无人看**。已在 `tests/models/test_base.py` 加一条遍历
+      `Base.metadata` 全表的断言（23 表 + 列名片段匹配 `delet`/`archiv`/`remov`/`soft_delete`/`is_active`），
+      加表即自动进入范围。分组那三条**保留**（各自钉住本组的局部口径，代价是 4 条断言）
+- [ ] 9.4l **spec 里本阶段没有落点的三条要求（只记录，不擅自补实现）**：
+      ① `specs/data-model/spec.md:37`「必须让全部 23 个实体携带 `warehouse_id` 并**在查询时按其过滤**」——
+      前半句已验（23 表的列都在，§2~§6 各表逐一断言），后半句**本阶段无落点**：查询层（仓储/服务函数）
+      是阶段三、四的东西，本阶段没有任何生产查询语句，故「过滤」无从体现，也无法测。
+      ② `specs/auth/spec.md:42`「账号激活时必须**生成初始凭据并由管理员线下发放**」——
+      生成与发放都没有实现，也**刻意不放在种子脚本里**（预置口令会被抄进部署脚本，而它是全系统权限的入口），
+      与 9.4g③「首个管理员账号无创建路径」是同一件事的两面，**待决项合并到 9.4g③**；
+      ③ **本 change 的 spec 内部有一处张力**：`specs/auth/spec.md:9` 要求非 admin 触发账号端点时返回
+      **403**，而 `specs/permission/spec.md:94` 要求本阶段**不得**在业务端点施加资源级鉴权（403 由
+      路线图 RBAC 承担）。两者只有在「账号端点尚不存在」时同时成立 —— 故 9.4g③ 一旦决定本阶段补账号开通端点，
+      这条张力必须同时裁决（403 从哪一层来）。**本阶段实现按 permission 那份**（CLAUDE.md §八：v1 只有
+      认证中间件 + 矩阵数据，无端点级强制）
 - [ ] 9.5 收尾：分支 `phase-2/data-model-permission` 以 `--no-ff` 合并 `main` 并打 `v0.2.0`；验证：`git tag | grep v0.2.0` 命中，且工作区干净
