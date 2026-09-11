@@ -35,7 +35,13 @@ PLANNED_TIERS = {
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="成品库位智能推荐 — Evals 运行入口")
     parser.add_argument("--tier", choices=TIERS, default="all", help="运行哪一层")
-    parser.add_argument("--compare", metavar="BASELINE_JSON", help="与基线对比，劣化 >5% 判定失败")
+    # `%%` 是**必须的转义**，不是笔误：argparse 会用 `help_string % params` 展开帮助文本
+    # （`_expand_help`，为的是替换 `%(default)s` 这类占位符），于是裸 `%` 后面跟着中文
+    # 会被当成格式说明符 → `ValueError: unsupported format character`。
+    # 而它发生在**构造 parser 时**，也就是每一次调用（含 `--list`）都在 argparse 里崩成
+    # 退出码 1 + traceback，永远走不到本文件那段「以退出码 3 失败」的设计。
+    # 回归由 tests/logic/test_run_evals.py 守着。
+    parser.add_argument("--compare", metavar="BASELINE_JSON", help="与基线对比，劣化 >5%% 判定失败")
     parser.add_argument("--list", action="store_true", help="只列出计划中的评测层，不执行")
     parser.add_argument(
         "--allow-skeleton",

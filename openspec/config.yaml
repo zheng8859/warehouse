@@ -76,7 +76,7 @@ context: |
     `file_type` = `PO`/`DO`/`INV`；`ledger_type` = 同 `job_type`；
     `disposition` = `ACCEPT`/`TUNE`/`REJECT`；`abc_class` = `A`/`B`/`C`；
     `role` = `warehouse_keeper`/`planner`/`supervisor`/`admin`；
-    `account_status` = `pending`/`active`/`disabled`；`verify_result` = `PASS`/`DEVIATION`。
+    `account_status` = `pending`/`active`/`disabled`/`rejected`；`verify_result` = `PASS`/`DEVIATION`。
   - **API 路径小写、层级式**：`/api/import/*`、`/api/snapshot/*`、`/api/cap/*`、
     `/api/allocate/batch`、`/api/job/*`、`/api/kpi/snapshot`、`/api/llm/toggle`、`/api/health`。
   - **库位号为 6 位文本**，前 2 位 = 巷道（`010104` → 巷道 01）。所有巷道级聚合对库位号 `[:2]` 切片。

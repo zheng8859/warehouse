@@ -16,6 +16,7 @@ busy_timeout 仅作兜底。
 """
 from __future__ import annotations
 
+import json
 from collections.abc import Generator
 from typing import Any
 
@@ -40,12 +41,30 @@ def _configure_sqlite_connection(
         cursor.close()
 
 
+def json_serializer(obj: Any) -> str:
+    """JSON 列的序列化口径（design.md D4）。
+
+    两处非默认行为，都影响**库里那串文本长什么样**：
+
+      - `ensure_ascii=False`：中文不写成 `\\uXXXX`。`receipt_json` 的键值大量是中文
+        （品名、告警项），转义后「直接查库排障」这条路就废了。
+      - `sort_keys=True` + 紧凑分隔符：同一份内容只有一种字节表示。与项目口径
+        「同样输入必得同样输出」同源 —— 否则内容相同但键序不同的两条记录，
+        在任何按文本比对的场合（迁移、快照去重、审计）都会被判成不同。
+    """
+    return json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
 _is_sqlite = settings.database_url.startswith("sqlite")
 
 engine = create_engine(
     settings.database_url,
     echo=settings.sqlalchemy_echo,
     future=True,
+    # JSON 列的统一序列化（D4）。测试引擎必须用同一份，否则用例证明的
+    # 「存储形态」与生产不是一回事 —— 见 tests/conftest.py。
+    json_serializer=json_serializer,
+    json_deserializer=json.loads,
     # check_same_thread=False 是 FastAPI 线程池 + SQLite 的常规要求；
     # 安全性由「单进程 + 乐观锁」约束共同保证，不要借此开启多 worker 写。
     connect_args={"check_same_thread": False} if _is_sqlite else {},

@@ -107,14 +107,19 @@ class Role(str, Enum):
 
 
 class AccountStatus(str, Enum):
-    """账号状态。13 §5.1。**lowercase**。
+    """账号状态（4 个）。13 §5.1 / 17 §九。**lowercase**。
 
     紧急吊销 = 置 disabled，下次请求校验即失败（无服务端黑名单，13 §8.3）。
+
+    `REJECTED`（管理员驳回 / 废弃）是**取值补充而非枚举新增**：17 §九 与 13 §5.2 已
+    订正，`AccountStatus` 仍是那 11 个枚举之一（design.md D2）。它的地位与另外三值
+    不同 —— 是**终态**，`rejected → active` 不是合法迁移（spec `auth`「账号状态迁移」）。
     """
 
     PENDING = "pending"
     ACTIVE = "active"
     DISABLED = "disabled"
+    REJECTED = "rejected"
 
 
 class VerifyResult(str, Enum):

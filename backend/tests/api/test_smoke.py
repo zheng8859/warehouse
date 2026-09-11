@@ -99,6 +99,47 @@ def test_unknown_api_path_is_401_not_404(client: TestClient) -> None:
     assert client.get("/api/definitely-not-a-route").status_code == 401
 
 
+#: tasks.md 8.5 要求「新增未知 `/api/*` 路径的 401 断言」—— 单条随机串说服力不够：
+#: 它只能证明"一个明显不存在的路径"被拦。下面这些是**探测者真正会试的形状**：
+#: 已知路由的子路径、将来大概会有的路径、以及带尾斜杠 / 无尾斜杠两种写法。
+#: 它们对**未认证**请求必须全部 401，一个 404 就足够把"哪里真的存在"指出来。
+_UNKNOWN_API_PATHS: tuple[str, ...] = (
+    "/api/definitely-not-a-route",
+    "/api/auth/login/extra",  # 白名单路径的子路径 —— 白名单是精确匹配，不该被前缀放行
+    "/api/auth",              # 白名单路径的父路径
+    "/api/kpi/dashboard",     # 阶段四才有的看板端点（还没实现）
+    "/api/ledger/write",      # 红线条目：这条路不该存在，更不该免认证
+    "/api/",
+    "/api",
+)
+
+
+@pytest.mark.parametrize("path", _UNKNOWN_API_PATHS)
+def test_every_unknown_api_path_is_401(client: TestClient, path: str) -> None:
+    """8.5：未知 `/api/*` 一律 401，**无一例外**。"""
+    resp = client.get(path)
+
+    assert resp.status_code == 401, f"{path} 返回了 {resp.status_code}"
+
+
+def test_unknown_path_response_is_indistinguishable_from_a_known_one(client: TestClient) -> None:
+    """两种情况的 401 **逐字节相同** —— 这才是"不区分原因"的落点。
+
+    只断言 `status_code == 401` 挡不住「未知路径 401 + `{"error":"not_found"}`、
+    已存在路径 401 + `{"error":"unauthenticated"}`」这类实现：状态码一致而响应体
+    不一致，探测者照样能一条一条地问出哪些路由存在。所以这里比的是**整个响应体**，
+    并且顺带钉住它的形状（`error` 与 `message` 两个键，中间件与登录端点同形 ——
+    `test_auth.py` 另有一条守着登录端点那一份）。
+    """
+    unknown = client.get("/api/definitely-not-a-route")
+    known = client.get("/api/health")  # 真实存在（19 附录B），但需认证
+
+    assert unknown.status_code == known.status_code == 401
+    assert unknown.json() == known.json()
+    assert set(unknown.json()) == {"error", "message"}
+    assert unknown.json()["error"] == "unauthenticated"
+
+
 def test_whitelist_exact_matches_doc_13() -> None:
     """白名单常量与 13 §6.1 逐条一致。
 
@@ -111,8 +152,16 @@ def test_whitelist_exact_matches_doc_13() -> None:
 
 
 def test_whitelist_matching_rules() -> None:
-    """精确匹配 + `/docs/` 前缀放行；`/api/*` 其余路径不放行。"""
+    """**只有**精确匹配；`/api/*` 其余路径一律不放行。
+
+    曾经这里断言 `/docs/oauth2-redirect` 按 `/docs/` 前缀放行。那条前缀规则已删
+    （理由见 `middleware.WHITELIST_EXACT` 的注释：`/docs` 页面不请求任何本站子路径，
+    而白名单每多一条就多一个免认证入口）。13 §6.1 的清单是**四条**，
+    所以从「四条」这一侧测 —— 前缀放行是一种很难被注意到的扩大。
+    """
     assert _is_whitelisted("/health")
-    assert _is_whitelisted("/docs/oauth2-redirect")  # 子资源按前缀放行
+    assert _is_whitelisted("/docs")
+    assert not _is_whitelisted("/docs/oauth2-redirect")  # 不做前缀放行
     assert not _is_whitelisted("/api/health")
     assert not _is_whitelisted("/healthz")  # 不做模糊匹配
+    assert not _is_whitelisted("/api/auth/login/extra")  # 不做子路径放行

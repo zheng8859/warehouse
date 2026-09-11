@@ -26,7 +26,12 @@ class DomainError(Exception):
 
 
 class Unauthenticated(DomainError):
-    """凭据缺失 / 过期 / 无效。中间件通常直接返回 401，本类供非中间件路径使用。"""
+    """凭据缺失 / 过期 / 无效。
+
+    两条路径都产生 401：登录端点**抛本异常**（走 `app/main.py` 的处理器），
+    中间件**构造本异常**再渲染（它在处理器之外，见 `error_body`）。同一份响应体
+    必须逐字一致，否则前端拦截器得分两个分支按 `error` 分流。
+    """
 
     http_status = 401
     code = "unauthenticated"
@@ -68,3 +73,19 @@ class ValidationBlocked(DomainError):
 
     http_status = 422
     code = "validation_blocked"
+
+
+def error_body(exc: DomainError) -> dict[str, Any]:
+    """领域异常 → 响应体。**唯一定义处**。
+
+    401 有两个产生方（中间件、登录端点），而中间件在异常处理器**之外**（它包着整个
+    应用），拿不到 `app.exception_handler` 那条路径 —— 所以它自己构造异常、自己渲染。
+    「两处形状一致」不能靠两处各自写对，否则下一次有人给其中一处加 `detail`，
+    前端拦截器就得为同一个 401 写两个分支。故渲染只有这一份，两处都调它。
+    """
+    body: dict[str, Any] = {"error": exc.code, "message": exc.message}
+    # `detail` 为 None 时**不出现**这个键：无 detail 的（401）与有 detail 的
+    # （409 状态冲突、403 权限拒绝）形状由此分开，且这个分法只有一处定义。
+    if exc.detail is not None:
+        body["detail"] = exc.detail
+    return body

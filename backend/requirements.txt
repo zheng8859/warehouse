@@ -15,12 +15,17 @@ openpyxl==3.1.5
 python-multipart==0.0.27
 
 # ---- 认证 ----
-PyJWT==2.13.0
 bcrypt==5.0.0
 # 注意：不要引入 passlib。
 # passlib 1.7.4 + bcrypt 5.x + Python 3.14 下调用 passlib.hash.bcrypt.hash()
 # 会抛 ValueError（passlib 的后端探测触发 bcrypt 的 72 字节校验）。
 # 详见 app/core/security.py。
+#
+# 也**不要引入 PyJWT / python-jose / authlib**（design.md D7）：
+# 会话凭据是 HS256 单一算法的自实现，用标准库 hmac + hashlib + base64 + json。
+# 通用 JWT 库必须支持多种算法（含 alg=none）才叫通用，而本产品只用一种 ——
+# 自实现后「算法协商」这条路在结构上就不存在（alg 只被核对、不参与选择）。
+# 原 PyJWT==2.13.0 钉子已在阶段二移除，守卫见 tests/logic/test_token.py 的 AST 检查。
 
 # ---- 开发与测试 ----
 pytest==9.0.3

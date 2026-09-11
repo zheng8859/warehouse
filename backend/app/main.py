@@ -28,7 +28,8 @@ from app.api.routes import (
     snapshot,
 )
 from app.core.config import settings
-from app.core.errors import DomainError
+from app.core.db import SessionLocal
+from app.core.errors import DomainError, error_body
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,11 @@ def create_app() -> FastAPI:
         openapi_url="/openapi.json",
         redoc_url=None,
     )
+
+    # 会话工厂挂到 app 上：中间件（第 1 层）与端点依赖（`deps.get_db`）都读它，
+    # 于是测试里换库只需覆盖一处 —— 漏掉一处的后果是「端点读测试库、中间件读开发库」，
+    # 那会表现成一个难以理解的 401，而不是「有东西没配好」。见 app/api/deps.py。
+    app.state.session_factory = SessionLocal
 
     # 第 1 层：认证中间件（全局认证，v1 实现）。13 §六。
     app.add_middleware(AuthMiddleware)
@@ -96,14 +102,9 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(DomainError)
     async def _domain_error_handler(request: Request, exc: DomainError) -> JSONResponse:
-        return JSONResponse(
-            status_code=exc.http_status,
-            content={
-                "error": exc.code,
-                "message": exc.message,
-                "detail": exc.detail,
-            },
-        )
+        # 形状在 `errors.error_body` —— 中间件（在处理器之外）也调它，故两处的 401
+        # 逐字一致是**结构上**的，不靠两处各自写对。
+        return JSONResponse(status_code=exc.http_status, content=error_body(exc))
 
 
 app = create_app()

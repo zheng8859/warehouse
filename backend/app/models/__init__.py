@@ -17,3 +17,26 @@
 
 导入顺序敏感：本模块必须导入全部模型，确保 Base.metadata 完整（建表与迁移依赖）。
 """
+from __future__ import annotations
+
+# 已实现的实体逐个登记；尚未实现的模块只有 docstring，导入它们是空操作，
+# 但先挂上可以保证后续往模块里加实体时自动进 Base.metadata。
+from app.models import (  # noqa: F401
+    configuration,
+    identity,
+    job,
+    kpi,
+    linkage,
+    master_data,
+)
+from app.models.base import Base  # noqa: F401
+
+__all__ = [
+    "Base",
+    "configuration",
+    "identity",
+    "job",
+    "kpi",
+    "linkage",
+    "master_data",
+]
