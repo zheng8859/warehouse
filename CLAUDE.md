@@ -306,6 +306,11 @@ venv（`backend/.venv`）已建、`requirements.txt` 已装 ·
 `backend/tests/api/test_smoke.py`：9 条装配冒烟测试（装配完整性 / 认证中间件 / 白名单）·
 换行符统一为 LF（`.gitattributes`）
 
+**阶段三增量**：`InventoryItem.zone` 已清退（`retire-zone-column`，含迁移 `99ed4f7e48cd`）——
+该列的两处文档来源（`17` §3.3 字段枚举、`16` A.1 INV 模版）都已清退，且全仓从无读写方
+（无 DTO 字段、无 importer 映射、无因子读它），留一个无来源又无消费方的列只会让
+「实体字段以 `17` 为准」这条口径持续失真。
+
 **未完成**（均为阶段二起）：
 
 - `backend/scripts/init_db.py`、`seed_dev.py` —— 阶段二随模型实现
