@@ -299,10 +299,12 @@ Go/No-Go 闸门：集中度达成率 ≥70% 且趋势向好 + 护栏全过 → G
 no-mistakes 已 `init`（二进制本机已存在，见第十二节）·
 新增 `env` scope（`00` §4.2 正本 + 校验脚本同步，见第六节）·
 graphify 已验证端到端可用（见第十三节）·
-首次提交 `6fdc73c` + `git tag -a v0.1.0` ·
+首次提交 `6fdc73c` ·
+`v0.1.0` 已打标（阶段一收尾）并推送 origin ·
 venv（`backend/.venv`）已建、`requirements.txt` 已装 ·
 **pre-commit 三类钩子已装并实测通过** ·
-`backend/tests/api/test_smoke.py`：9 条装配冒烟测试（装配完整性 / 认证中间件 / 白名单）
+`backend/tests/api/test_smoke.py`：9 条装配冒烟测试（装配完整性 / 认证中间件 / 白名单）·
+换行符统一为 LF（`.gitattributes`）
 
 **未完成**（均为阶段二起）：
 
