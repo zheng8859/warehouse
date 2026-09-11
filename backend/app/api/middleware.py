@@ -139,7 +139,15 @@ def _load_active_account(request: Request, account_id: int):
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
-    """全局认证。凭据有问题一律 401，不区分原因（避免成为探测面）。"""
+    """全局认证。凭据缺失、无效、过期或签名错误一律 **401**。
+
+    这里的硬边界是**不返回 404** —— 不泄露路由是否存在（spec `permission` 的
+    「访问边界与免认证白名单」）。**不是**「不区分失败原因」：401 响应体经
+    `_unauthorized` 带着 `SessionInvalid` 的逐因文案，这是**有意**的，理由与
+    「它为何不构成探测面」写在 spec `auth` 的「登录端点与失败语义」里 ——
+    逐因文案只在**签名校验通过之后**才可达（`security.py` 的校验顺序），
+    与之相反的是登录端点：那里三种失败必须返回同一响应体。
+    """
 
     async def dispatch(self, request: Request, call_next):
         if not _requires_auth(request.url.path):
