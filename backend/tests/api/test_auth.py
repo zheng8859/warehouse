@@ -567,6 +567,43 @@ def test_middleware_puts_a_role_member_on_the_request_state(api: Api) -> None:
     assert response.json() == {"is_member": True, "type": "Role", "value": "supervisor"}
 
 
+# ------------------- 7.6c 凭据校验的 401 保留失败原因（spec `auth` 的正向要求）
+
+def _tamper_signature(token: str) -> str:
+    """改掉签名段的首字符 —— 长度不变，故「段数/缺段」那些判断仍会先通过。"""
+    head, body, sig = token.split(".")
+    return "%s.%s.%s%s" % (head, body, "A" if sig[0] != "A" else "B", sig[1:])
+
+
+def test_credential_401_keeps_the_failure_reason(api: Api) -> None:
+    """spec 场景「凭据校验的 401 保留失败原因」：过期与签名被篡改，两次 `message` 不同。
+
+    这条要求与登录端点**相反**，且是有意的。判据在 `decode_session_token` 的顺序里
+    （结构 → 算法 → 签名 → 载荷语义）：**「已过期」这句话只在验签通过之后才可达**，
+    够得着它的人要么是合法签发方 —— 逐因文案正是给他的诊断信息 —— 要么已持密钥。
+    而登录端点的响应面向未认证的任何人，所以那里三种失败必须同一份响应体。
+
+    诊断力是有代价换来的：`_unauthorized(str(exc))` 是中间件把原因带出的**唯一**通道
+    （认证路径一行日志都不记）。所以这条断言同时也是「别把原因收敛成统一文案」的护栏 ——
+    真收敛了，线上一个 401 就分不清是过期、被吊销还是载荷被改。
+
+    刻意只断言「两次**不同**」而不写死文案：规格钉的是「可区分」这个性质，
+    文案属实现细节，写死会让任何一次措辞润色都要改规格。
+    """
+    account_id = api.create_account()
+    issued = datetime.now(timezone.utc) - timedelta(hours=settings.session_hours + 1)
+    expired = create_session_token(account_id, Role.WAREHOUSE_KEEPER.value, "active", now=issued)
+    tampered = _tamper_signature(api.login_token())
+
+    expired_response = api.client.get("/api/health", headers=api.auth(expired))
+    tampered_response = api.client.get("/api/health", headers=api.auth(tampered))
+
+    assert expired_response.status_code == tampered_response.status_code == 401
+    assert "过期" in expired_response.json()["message"]
+    assert "签名不匹配" in tampered_response.json()["message"]
+    assert expired_response.json()["message"] != tampered_response.json()["message"]
+
+
 # ------------------------------------------------------------------ 7.7 完成标准 #4 四场景
 
 def test_standard_4_scenario_whitelist_passes(api: Api) -> None:
