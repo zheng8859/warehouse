@@ -32,13 +32,34 @@
 
 ## 2. 主数据链（`26` 附录A 的 A + B 组，6 实体）
 
-- [ ] 2.1 `Warehouse`；验证：`tests/models/test_master_data.py` 断言唯一键与 `warehouse_id` 必填
-- [ ] 2.2 `Aisle`（含 `total_cells` 总格数、`is_near_station` 是否近站台）；验证：同文件断言两条记录可区分近站台/非近站台
-- [ ] 2.3 `Location`（`location_code` 6 位文本、层/列/格、状态；唯一约束 `(warehouse_id, location_code)`）；验证：写入 `010104` 后读回为长度 6 的字符串且首字符为 `0`（spec `data-model`「库位号按 6 位文本处理」）
-- [ ] 2.4 `AisleStation`；验证：断言与 `Aisle` 的外键关系可建立
-- [ ] 2.5 `Material`（含 `abc_class`，取值限于 `A` / `B` / `C`）；验证：写入非法取值 `D` 被 CHECK 拒绝
-- [ ] 2.6 `Batch`（外键 → `Material`）；验证：断言非法 `material_id` 因 `foreign_keys=ON` 被拒绝
-- [ ] 2.7 为本组生成迁移并落库；验证：`alembic upgrade head` 后 6 张表存在，且 `autogenerate` 产生空 diff
+- [x] 2.1 `Warehouse`；验证：`tests/models/test_master_data.py` 断言唯一键与 `warehouse_id` 必填
+      （仓库号即 `warehouse_id`，与 `16` A.1 的「仓库号 → warehouse_id」一致；另加 `name` 必填、
+      `plant_code` 可空 —— 文档未给「工厂编码」与仓库号的区分口径，不编第二套编码体系）
+- [x] 2.2 `Aisle`（含 `total_cells` 总格数、`is_near_station` 是否近站台）；验证：同文件断言两条记录可区分近站台/非近站台
+      （**两列均可空**：同源于待补充导出的巷道主数据（`16` §6.1）。`is_near_station = NULL`
+      表示「未导出」，不得当 `False` 用 —— 否则近站台巷道静默退出预留池）
+- [x] 2.3 `Location`（`location_code` 6 位文本、层/列/格、状态；唯一约束 `(warehouse_id, location_code)`）；验证：写入 `010104` 后读回为长度 6 的字符串且首字符为 `0`（spec `data-model`「库位号按 6 位文本处理」）
+      （三处文档一致：6 位 = 前 2 位巷道 + **中 2 位「层列」**（一个字段，不再拆层与列）+ 后 2 位格。
+      三条 CHECK 把编码规则钉进库；**不建到 `aisles` 的外键** —— 巷道由库位号切片派生（`16` A.4），
+      文档未要求库位先有巷道记录。`status` 可空、不建 CHECK：取值域文档未定义）
+- [x] 2.4 `AisleStation`；验证：断言与 `Aisle` 的外键关系可建立
+      （复合外键 → `aisles(warehouse_id, aisle_no)`，并按 17 ER 图 `Aisle ||--|| AisleStation`
+      加唯一约束。`distance_weight` **不加 0~1 的 CHECK**：文档只给示例 0.9/0.3，未声明值域）
+- [x] 2.5 `Material`（含 `abc_class`，取值限于 `A` / `B` / `C`）；验证：写入非法取值 `D` 被 CHECK 拒绝
+      （D3 两层各一条用例：Python 侧 `StatementError`、绕过 ORM 的原生 SQL 撞 DB CHECK。
+      `abc_class` 可空 —— 它是成品清单导入触发的派生字段（`16` A.4））
+- [x] 2.6 `Batch`（外键 → `Material`）；验证：断言非法 `material_id` 因 `foreign_keys=ON` 被拒绝
+      （`production_date` 用 DATE：Excel 序列号须先转日期）
+- [x] 2.7 为本组生成迁移并落库；验证：`alembic upgrade head` 后 6 张表存在，且 `autogenerate` 产生空 diff
+      （迁移 `56fbc88f62e8`，`autogenerate` 生成、未手改 DDL。空 diff 走 `command.check`
+      而非 `compare_metadata` —— 前者会完整跑 `env.py`，自带过滤器。
+      **本组踩到并修掉一个工具侧假阳性**：`sa.Enum` 的 CHECK 挂在类型上，Alembic 只在 metadata 侧
+      排除它（`_is_type_bound`，SQLAlchemy #3260），于是库里那条真实 CHECK 被报成「多出来」，
+      每次 autogenerate 都想 DROP —— 全部枚举列都会踩。修在 `migrations/env.py` 的
+      `include_object`（反射侧同口径排除），代价是**改枚举取值时 autogenerate 报不出差异，须手写迁移**，
+      已写进该函数的 docstring。
+      另：`scripts/seed_dev.py` 按自身「填充约定」补了主数据链种子（幂等、父先于子；
+      `AisleStation` 刻意不种 —— 待补充导出的主数据不编造），`tests/models/test_seed_dev.py` 覆盖）
 
 ## 3. 衔接链（`26` 附录A 的 C 组 + `AisleCap`，5 实体）
 
