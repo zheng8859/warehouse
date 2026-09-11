@@ -82,9 +82,17 @@ def test_middleware_does_not_hand_write_the_401_body() -> None:
     断言「两处当前相同」挡不住下次漂移 —— 手写回 dict 的那一刻两处仍然相同，
     直到有人给其中一处加字段。所以查的是结构：状态码与响应体都从异常类来。
 
-    用 AST 而不是子串匹配：子串会把注释或 docstring 里解释「为什么不再手写」的
-    那句话判成违规，于是只有删掉解释才能变绿 —— 正好把最有价值的一段挤掉
-    （与 `test_token.py` 的 JWT 库守卫、`test_migrations.py` 的 create_all 守卫同一处置）。
+    用 AST 而不是子串匹配：`#` 注释里解释「为什么不再手写」的那句话不该被判成违规，
+    而只有 AST 分得清注释与字面量（子串匹配分不清，于是得删掉解释才能变绿 —— 正好把
+    最有价值的一段挤掉；与 `test_token.py` 的 JWT 库守卫、`test_migrations.py` 的
+    create_all 守卫同一处置）。
+
+    **豁免的只有 `#` 注释 —— docstring 不在其列**：docstring 本身也是 `ast.Constant`，
+    会被收进下面的字面量集合（middleware.py 的 19 条字面量里含模块 docstring，以及
+    8 个函数/类 docstring 中的 6 个）。所以 docstring 里同样不得出现该字面量。
+    这是想要的：docstring 是给人读的正文，不是「写什么都不算」的角落。（早先这条
+    注释把 docstring 也说成被豁免，与实测不符，已订正。）
+
     顺带查完整模块：`"unauthenticated"` 这个字面量在 middleware.py 里**一处都不该有**。
     """
     tree = ast.parse(MIDDLEWARE_SOURCE.read_text(encoding="utf-8"), filename=str(MIDDLEWARE_SOURCE))

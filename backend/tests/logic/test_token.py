@@ -42,6 +42,7 @@ from app.core.security import (
     create_session_token,
     decode_session_token,
 )
+from tests.support import BAD_USER_IDS
 
 pytestmark = pytest.mark.logic
 
@@ -293,11 +294,9 @@ def test_non_string_token_is_rejected() -> None:
 #: 改过，不证明内容本身合法：密钥轮换前签发的旧凭据、别处按自己理解拼的载荷、
 #: 将来给 claims 加字段时顺手改错的类型，都会落在这里。
 _BAD_CLAIM_VALUES: tuple[tuple[str, object], ...] = (
-    ("user_id", {}),           # dict → session.get() 抛 InvalidRequestError → 500
-    ("user_id", [1, 2]),       # list → 同上
-    ("user_id", "7"),          # 数字串：SQLite 能等值查到，但线上格式是整型
-    ("user_id", None),
-    ("user_id", True),         # bool 是 int 的子类 —— 会去查主键 1
+    # user_id 那五个与 tests/api/test_auth.py 的**端到端**用例共用一份事实
+    # （取值与各值落点的解释都在 tests/support.py）—— 同一个事实写两遍就会各自漂移。
+    *(("user_id", value) for value in BAD_USER_IDS),
     ("role", 1),
     ("role", None),
     ("status", 123),

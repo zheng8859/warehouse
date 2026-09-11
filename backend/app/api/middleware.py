@@ -43,7 +43,13 @@ from app.core.security import SessionInvalid, decode_session_token
 AUTH_HEADER = "Authorization"
 COOKIE_NAME = "wms_session"
 
-#: 13 §6.1 白名单 —— 精确匹配，**恰好这四条**。
+#: 免认证白名单 —— **恰好这四条**，精确匹配。
+#:
+#: 措辞上的出入要说清，免得下一个人按注释去找事实来源却对不上：`13` §6.1 第 1 步字面写的是
+#: 「检查请求路径是否匹配白名单**前缀**」，而同处列出的清单、以及 spec `permission`
+#: 的「访问边界与免认证白名单」钉住的，都是**恰好四条路径**。本实现取**精确匹配** ——
+#: 这是从 13 的清单收窄，不是照抄 13 的算法；宽的那一版会把 `/api/auth/login/extra`
+#: 一并放行，而白名单每多一条就多一个免认证入口。
 #:
 #: 曾经还有一条 `/docs/` 前缀放行（怕 Swagger 页面加载子资源时被拦）。查证后删掉：
 #: `/docs` 由 FastAPI 内联返回，JS/CSS 走 CDN，页面本身不请求任何本站子路径

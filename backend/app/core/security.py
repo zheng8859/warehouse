@@ -59,8 +59,14 @@ BCRYPT_MAX_PASSWORD_BYTES = 72
 SESSION_CLAIMS: tuple[str, ...] = ("user_id", "role", "status", "iat", "exp", "warehouse_id")
 
 #: 每个 claim 的**类型**要求（封闭集合的后半，见模块 docstring 第 3 条第 4 点）。
-#: `role` / `status` 这里只查「是串」；取值是否属于 `Role` / `AccountStatus` 由
-#: 使用方判定 —— 本模块不认识领域枚举，只认识这份线上格式。
+#: `role` / `status` 这里只查「是串」—— 本模块不认识领域枚举，只认识这份线上格式。
+#: 取值合不合法由**两处不同的地方**判，且都不是这里：
+#:   - `role`：`app/api/middleware.py` 的 `_as_role` 转成 `Role` 成员，不在四个角色内
+#:     即 401。那边必须转成员 —— `permissions.check` 的 `isinstance` 守卫只认成员
+#:     （`str` 枚举的 hash 取成员名，裸字符串查表会静默查不中）。
+#:   - `status`：**故意不判**。它的权威副本在库里，中间件每个请求回查一次（13 §8.3
+#:     的紧急吊销就靠这一步）；凭据里这份只是**签发时**的快照。拿它去判等于把
+#:     「置 disabled 即失效」这条唯一的吊销手段废掉，故这个字段有类型校验、没有使用方。
 #: `warehouse_id` 不允许 `None`：签发时 `None` 会被替换成当前厂编码，故它在线上
 #: 恒为串；给 `None` 开口子等于让「没带厂」的凭据合法，而那正是多厂前的扩张点。
 _CLAIM_TYPES: tuple[tuple[str, tuple[type, ...]], ...] = (

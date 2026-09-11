@@ -51,6 +51,7 @@ from app.core.security import create_session_token, decode_session_token, hash_p
 from app.main import create_app
 from app.models.base import Base
 from app.models.identity import Account
+from tests.support import BAD_USER_IDS
 
 #: 22 §2.1 的登录表单样本（文档只给「用户名 + 密码」两栏，具体口令是合成值）。
 PASSWORD = "Gtj@2026#init"
@@ -519,12 +520,11 @@ def test_credential_with_an_unknown_role_is_rejected(api: Api) -> None:
     assert response.status_code == 401
 
 
-#: 签名合法但 `user_id` 类型不对的载荷。`type: ignore` 是**刻意**的：正常路径造不出
-#: 这些值，本用例要的正是「一份本系统绝不会签发的凭据」（见 test_token.py 的同类用例）。
-_BAD_USER_IDS: tuple[object, ...] = ({}, [1, 2], "7", None, True)
-
-
-@pytest.mark.parametrize("user_id", _BAD_USER_IDS, ids=[repr(v) for v in _BAD_USER_IDS])
+# 签名合法但 `user_id` 类型不对的载荷 —— 取值清单与 `test_token.py` 的**类型校验**用例
+# 共用同一份事实（`tests/support.py`），免得两处各自漂移。
+# `type: ignore` 是**刻意**的：正常路径造不出这些值，本用例要的正是「一份本系统绝不会
+# 签发的凭据」。
+@pytest.mark.parametrize("user_id", BAD_USER_IDS, ids=[repr(v) for v in BAD_USER_IDS])
 def test_credential_with_a_malformed_user_id_is_rejected(api: Api, user_id: object) -> None:
     """`user_id` 不是整数 → 401。
 
