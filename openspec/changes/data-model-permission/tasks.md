@@ -158,10 +158,38 @@
 
 ## 5. 度量与身份（`26` 附录A 的 E + F 组，2 实体）
 
-- [ ] 5.1 `KpiSnapshot`（`card_json`）；验证：`tests/models/test_kpi_identity.py` 断言可写入并读回 JSON 结构（非字符串）
-- [ ] 5.2 `Account`（`username` 全局唯一、`password_hash`、`role`、`status` **含 `rejected`**、`created_by`、`last_login_at`、初始密码是否已修改）；验证：断言 `rejected` 为合法值、`username` 重复被拒、响应模型中不含密码与哈希
-- [ ] 5.3 为 5.1/5.2 生成迁移；验证：`alembic upgrade head` 后两表存在，`autogenerate` 空 diff
-- [ ] 5.4 确认 `core/enums.py` 的 `AccountStatus` 补入 `REJECTED` 取值且**枚举个数仍为 11**；验证：`tests/models/test_kpi_identity.py` 断言 `len({...}) == 11` 计数不变
+- [x] 5.1 `KpiSnapshot`（`card_json`）；验证：`tests/models/test_kpi_identity.py` 断言可写入并读回 JSON 结构（非字符串）
+      （字段照 17 §5.1：周期 / 两项跨巷道均值 / 加权集中度 / 采纳率 / 落位准确率 / 环比 / 生成时间；
+      生成时间即继承的 `created_at`，不另立第二列 —— 与 `ImportSession` 同一处置。
+      **一仓库一周期一行**：18 §3.1 的 `READY → STALE → PENDING`、`ERROR → PENDING` 都是同一行的状态变化
+      （重算），不是新增行；唯一起见键 `(warehouse_id, period)` 列序同时兼作「看板查最新」的索引，
+      与 `AisleCap` 同一处置。**指标列全可空**不是宽松：18 §3.2 写明 `PENDING` 时只有周期与仓库号，
+      写 NOT NULL 状态机在存储层就落不了地。采纳率 / 准确率**无样本时为 NULL 而非 0**（0% 像全线崩盘，
+      真实语义是「还没有可采纳的决策」；与 `Aisle.is_near_station` 用 NULL 表达「未导出」同一口径）。
+      两处 17/18 未给口径的处置：`status` 落列来自 18 §3.1 的状态机（17 §5.1 的字段表没有它，
+      落地理由见 design.md Goals「阶段三~七不必回头改模型」）、环比落 JSON 列（字段在 17 列了、
+      两处文档都没给口径）—— 均登记在 9.4e）
+- [x] 5.2 `Account`（`username` 全局唯一、`password_hash`、`role`、`status` **含 `rejected`**、`created_by`、`last_login_at`、初始密码是否已修改）；验证：断言 `rejected` 为合法值、`username` 重复被拒、响应模型中不含密码与哈希
+      （`username` **全局唯一**（17 §6.1 原文）—— 这是 `warehouse_id` 过滤维度的一处刻意例外：
+      账号是运维主体，按仓库分域会让「同用户名两个账号」看起来合法，而登录页只有一个用户名输入框；
+      `warehouse_id` 仍保留（数据范围区分用，13 §3.2）。`created_by_id` 是**自引用且可空** ——
+      首个管理员没有上级可指（13 §5.1 的状态图以「管理员创建账号」为起点），用 NULL 表达「基建写入」，
+      不编造 `system` 账号来凑外键。`last_login_at` 空 = 从未登录，不拿 `created_at` 兜底。
+      `initial_password_changed` 默认 `False` 且它就是**强制改密的开关**（首次登录必须改密）。
+      表上**只有 `password_hash`**，并有一条用例逐个点名禁止 `password` / `initial_password` 等明文列
+      —— 明文列一旦存在，迟早会被某条「临时」路径写进去。
+      「响应模型中不含密码与哈希」的断言属 §7（端点尚不存在），此处守的是模型形状）
+- [x] 5.3 为 5.1/5.2 生成迁移；验证：`alembic upgrade head` 后两表存在，`autogenerate` 空 diff
+      （迁移 `0559bebb5207`，`autogenerate` 生成、未手改。它同时**销了 9.4d① 的账**：
+      用 `batch_alter_table` 补上 `job_orders.confirmed_by_id` 与 `ledgers.operator_id` → `accounts.id`
+      两条外键（SQLite 只能 batch 重建）。已实测重建前后 `sqlite_master.sql` 的 CHECK 数：
+      `job_orders` 5→5、`ledgers` 5→5、其余 4 张作业链表也不变。`alembic check` 报空 diff）
+- [x] 5.4 确认 `core/enums.py` 的 `AccountStatus` 补入 `REJECTED` 取值且**枚举个数仍为 11**；验证：`tests/models/test_kpi_identity.py` 断言 `len({...}) == 11` 计数不变
+      （用例不只数个数，还**逐条点名** 11 个类名 —— 只数个数的话，「数量对了但换了一个」会假通过。
+      `REJECTED` 在枚举里的注释写明它与另外三值的地位不同：它是**终态**，`rejected → active`
+      不是合法迁移（spec `auth`「账号状态迁移」），迁移表属 §7.3。
+      另：17 §6.1 的散文里账号状态只写了三值（缺 `rejected`），而 §九 的枚举表是四值 ——
+      这两处是**文档内部冲突**（§九 为准，已由 13 §5.2 与 design.md D2 订正），登记在 9.4）
 
 ## 6. 配置与对话（`26` 附录A 的 G + H 组，5 实体）
 
@@ -196,7 +224,7 @@
 - [ ] 9.1 端到端建库验收：空库 → `alembic upgrade head` → `autogenerate` 产生**空 diff**；验证：两步均退出码 0 且 diff 为空
 - [ ] 9.2 全量测试：`python -m pytest backend/tests --tb=short -q`；验证：全绿且 L1 单元 < 5 秒（pre-commit 门禁）
 - [ ] 9.3 逐条核对 `26` 完成标准的 9 条，并对 **#9（`run_evals --tier l1`）出具书面豁免记录**：`evals/run_evals.py` 刻意以退出码 3 失败以防静默通过，其实现归阶段六（`30` 号）；验证：核对清单落进 `design.md` 或本文件，9 条各有「达成」或「豁免 + 理由」
-- [ ] 9.4 勘误登记（全部为**记录**，不在本阶段修）：`13` §3.1 移库作业行与合计数字（阶段七前必修）；`13` §5.1 注解「激活时创建 Account 记录」与状态图矛盾；`26` 附录A 的 `AisleCap` 分组、附录B 的 `outbound.operate` 单元格；`26` 前置检查 #2 的参考项目残留路径；`产品设计/31` 文档缺失（阶段七的规划文档）；`config.yaml`「枚举值全大写」与 `Role`/`AccountStatus` lowercase 的既有冲突
+- [ ] 9.4 勘误登记（全部为**记录**，不在本阶段修）：`13` §3.1 移库作业行与合计数字（阶段七前必修）；`13` §5.1 注解「激活时创建 Account 记录」与状态图矛盾；`17` §6.1 散文只写三个账号状态、`17` §九 的枚举表是四个（缺 `rejected`；以 §九 为准，已由 `13` §5.2 与 design.md D2 订正）；`26` 附录A 的 `AisleCap` 分组、附录B 的 `outbound.operate` 单元格；`26` 前置检查 #2 的参考项目残留路径；`产品设计/31` 文档缺失（阶段七的规划文档）；`config.yaml`「枚举值全大写」与 `Role`/`AccountStatus` lowercase 的既有冲突
 - [ ] 9.4b **§2 暴露的字段口径待确认项**（`17` 只列字段名、未给取值域或区分口径，故本阶段按「可空 + 文本 / 不加 CHECK」处置，**不编造取值**）：
       ① `Warehouse.plant_code` 与仓库号的区分 —— `19` §3.4 的多厂举例里「单厂编码」与仓库号同值 `GTJ10036`，文档未给区分口径（`17` §2.1 却把「工厂编码」列为独立字段）；
       ② `Location.status` 与 `Batch.status` 的取值域 —— 全文唯一候选是 `item_status`（源数据驱动），但**没有任何原文把二者等同**，故按文本存、不建 CHECK，待与业务方确认；
@@ -210,12 +238,12 @@
       ⑤ `InventoryItem` 是否要为 16 A.4 的**解析时派生字段**（巷道、占用格数）落列 —— 该表只给了派生逻辑与时机，没给存储口径，`17` §3.3 的字段表也没有。本阶段不落列：占用格数的「板-格」换算规则属 `CapacityConfig`（任务 §6，实体尚未建模），口径未定前连列类型都只能猜。阶段四按实际查询计划定（cap 聚合、同物料跨巷道 是否需要列级索引）；
       ⑥ `ImportSession.files_json` 超出 D4 的 JSON 映射表 —— D4 只映射 `17` §10 的 6 类结构，而 `17` §3.1 / `16` §3.3 要求三类文件清单（含**校验和**，是 16 §11.5 判重的依据）在库。本阶段按实体章节落列，若评审要求严格对齐 D4，需补 D4 或改述
 - [ ] 9.4d **§4 暴露的口径待确认项**（同样只记录、不擅自补设计）：
-      ① `job_orders.confirmed_by_id` 与 `ledgers.operator_id` 的**外键待 §5 补** —— 两列都指向账号表，
-      而 `Account` 属度量与身份链（§5）。本阶段按「必填 / 可空按 15 附录A 的字段表、**不建外键**」落列，
-      与 9.4c② 同一处置（目标表不在 `Base.metadata` 里，声明即抛 `NoReferencedTableError`）。
-      §5 落地 `accounts` 后须用 `op.batch_alter_table` 补两条外键，并在 `tests/models/test_job.py` 里
-      同步加「指向不存在的账号被拒」的负例。**注意顺序**：这两条外键要等 `Account` 建表之后，
-      且 `ledgers.operator_id` 是 NOT NULL —— 补外键前须确认开发库里没有指向不存在账号的历史行；
+      ① ~~`job_orders.confirmed_by_id` 与 `ledgers.operator_id` 的**外键待 §5 补**~~ —— **§5 已销账**：
+      迁移 `0559bebb5207` 用 `op.batch_alter_table` 补上两条 → `accounts.id` 的外键，
+      `tests/models/test_job.py` 同步加了两条负例（指向不存在的账号被拒）与一条「目标恒为 `accounts.id`」的模型侧断言，
+      并把 `_ledger` 夹具从占位整数 `1` 改成**真账号**（`_account` 工厂，先查后建以免撞 `username` 唯一约束）；
+      `test_cap_alert.py` 的台账夹具同改。**顺序前提已核**：开发库此刻无台账行，
+      `ledgers.operator_id` 虽是 NOT NULL，补外键不会撞历史脏数据；
       ② `verifications.metric_kind` 的**取值域未定** —— 17 §4.4 只列字段名（`metric_kind` / 实际值 / 阈值 /
       判定结果），未给取值清单，指标定义在 `18` 号。本阶段按 `String(32)` + 无 CHECK 落列，
       **不编造指标名**。待 18 号确认后：若取值封闭，应改 `enum_column`（届时 CHECK 变化不会产生
@@ -225,4 +253,29 @@
       拒绝」列在 `JobOrder` 上，15 §7.2 的二次确认卡又同时回填方案调整明细。本阶段按「处置结果记账在
       `JobOrder`（单据当前态）、方案原文留在 `RecommendationPlan.payload_json`（不可变方案）」处置，
       两者的先后与覆盖关系文档未明说。若评审认为调整后的方案也要留痕，需在 §4.3 侧增列而非改本表
+- [ ] 9.4e **§5 暴露的口径待确认项**（同样只记录、不擅自补设计）：
+      ① `KpiSnapshot.status` 的**出处是 18 而非 17** —— 17 §5.1 与 18 §3.3 的字段表都**没有**状态列，
+      但 18 §3.1 给了五态状态机（`PENDING`/`COMPUTING`/`READY`/`STALE`/`ERROR`）、§3.2 逐行写了每个
+      状态「此时可获取的信息」，§「看板展示上一次 READY 值并标注数据过期」更要靠它区分。本阶段落列
+      （不落则阶段六要再补一次迁移，与 design.md Goals「阶段三~七不必回头改模型」相抵）。
+      若评审认为状态应只活在计算层内存而不入库，删列即可 —— 但 18 §3.2 的「STALE 时看板展示上一次
+      READY 值」将无从判定。同理**错误描述**（18 §3.2：`ERROR` 时「可获取的信息 = 错误描述」）未给落点，
+      本阶段不落列 —— 待 18 明确它进 `card_json` 还是单列；
+      ② `KpiSnapshot` 的**「环比」口径未定** —— 字段在 17 §5.1 列了，但 17 与 18 全文都没说它是哪个指标的
+      环比、是单值还是分指标各一个（全文只出现 3 次「环比」，全是列举）。本阶段落 `period_over_period_json`
+      （JSON 能装下任何口径，不替文档定口径）；口径明确后应收紧成数值列 + 手工迁移（CHECK/类型变化
+      不产生 autogenerate diff，见 D8 的代价说明）。另需一并确认：环比是否干脆**不落库**而由历史行派生
+      （18 §151 把「趋势、环比」列为从 `KpiSnapshot` 历史算出的东西）—— 那样可从 9.4 的勘误侧改 17 §5.1；
+      ③ `KpiSnapshot` 的**口径版本引用**未落列 —— 18 §「阈值（N、预留比例）或口径变更须走配置页并记录
+      口径版本；历史 KpiSnapshot 保留旧口径，趋势对比须同口径」要求每一行能自证「按哪一版口径算的」。
+      目标 `CapacityConfig` 属 §6（此刻尚未建模），同 §3/§4 的延期外键处理：**§6 落地后须补一列**
+      （指向 `CapacityConfig.version_no` 的引用，或落进 `card_json` —— 阈值与判定已在卡片里，
+      但卡片是展示形状、不是查询键）。集中度阈值 N 也不落本表：它属 `CapacityConfig`（17 §七）；
+      ④ `Account` 与 `ImportSession` 的**关系未落列** —— 26 附录A 的依赖链写 `Account → ImportSession`，
+      而 17 §3.1 的字段清单里**没有**导入人 / 操作人列（只有会话 ID、批次号、数据时点、导入操作时间、
+      文件清单、校验结果、状态、分流去向、cap 重算结果、乐观锁、时间戳）。故本阶段不添列（17 是实体
+      字段的单一事实来源）。若确认需要「谁发起的导入」，加列 + 迁移，并在 §3.1 侧登记；
+      ⑤ `Account` 的**密码长度上界与凭据时钟容忍窗口** —— design.md Open Questions 的既有两项
+      （默认 64 字符 / 0 秒，可延后），本阶段未落 CHECK：它们的落点是 §7 的凭据设置入口与校验函数
+      （届时用 `bcrypt` 的 72 字节输入界兜底），落到列上会把「值域」与「校验时机」混在一起
 - [ ] 9.5 收尾：分支 `phase-2/data-model-permission` 以 `--no-ff` 合并 `main` 并打 `v0.2.0`；验证：`git tag | grep v0.2.0` 命中，且工作区干净

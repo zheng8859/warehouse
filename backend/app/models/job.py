@@ -63,12 +63,13 @@
     `Verification → Deviation → JobOrder`，15 §7.2 说偏离清单是移库的任务来源 ——
     两处说的都是这条回环。没有这一列，局部值域里的「已发起移库」就只是自述：
     它与「有人改过这格」在库里长得一样。
-11. **两处指向 `accounts` 的引用本阶段不建外键**：`job_orders.confirmed_by_id` 与
-    `ledgers.operator_id`（26 附录A 的 `Account → JobOrder`）。账号表属身份链（§5），
-    而 SQLAlchemy 的 `ForeignKey` 目标表必须已在 `Base.metadata` 中 —— 否则 `create_all`
+11. **两处指向 `accounts` 的引用是分两步建键的**：`job_orders.confirmed_by_id` 与
+    `ledgers.operator_id`（26 附录A 的 `Account → JobOrder`）。账号表属身份链，而
+    SQLAlchemy 的 `ForeignKey` 目标表必须已在 `Base.metadata` 中 —— 否则 `create_all`
     与迁移在编译 DDL 时抛 `NoReferencedTableError`，本组的建表与测试全部跑不起来。
-    与 §3 的 `cap_alerts.ledger_txn_id` 同一处理：**§5 落地 `accounts` 后必须用
-    `batch_alter_table` 补外键**（SQLite 改约束只能 batch 重建）。登记在 tasks.md 9.4b。
+    故 §4 先落整数列，**§5 落地 `accounts` 后由迁移 `0559bebb5207` 用
+    `batch_alter_table` 补上两条外键**（SQLite 改约束只能 batch 重建）—— 与 §3 的
+    `cap_alerts.ledger_txn_id` 同一处理。tasks.md 9.4d① 已据此销账。
 """
 from __future__ import annotations
 
@@ -208,8 +209,12 @@ class JobOrder(BaseEntity):
         Disposition, name="disposition", nullable=True
     )
 
-    #: 确认（= 执行）人。**本阶段无外键**：目标 `accounts` 属 §5，见模块 docstring 第 11 条。
-    confirmed_by_id: Mapped[int | None] = mapped_column(nullable=True)
+    #: 确认（= 执行）人。可空：未确认的单据没有确认人。外键由 §5 的迁移补上
+    #: （见模块 docstring 第 11 条）—— 「未确认不产生台账」这条红线要查得下去，
+    #: 单据上写着「已确认」就必须指得到人。
+    confirmed_by_id: Mapped[int | None] = mapped_column(
+        sa.ForeignKey("accounts.id"), nullable=True
+    )
 
     confirmed_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
@@ -312,9 +317,9 @@ class Ledger(BaseEntity):
     #: 台账是审计快照，必须自包含 —— 方案表会被后续重规划追加新行，台账不该跟着变。
     plan_json: Mapped[dict | None] = mapped_column(sa.JSON, nullable=True)
 
-    #: 操作人。**本阶段无外键**：目标 `accounts` 属 §5，见模块 docstring 第 11 条。
-    #: NOT NULL —— 15 附录A 三类台账都记操作人；没有操作人的台账无法追溯。
-    operator_id: Mapped[int] = mapped_column(nullable=False)
+    #: 操作人。NOT NULL —— 15 附录A 三类台账都记操作人；没有操作人的台账无法追溯。
+    #: 外键由 §5 的迁移补上（见模块 docstring 第 11 条）。
+    operator_id: Mapped[int] = mapped_column(sa.ForeignKey("accounts.id"), nullable=False)
 
     executed_at: Mapped[datetime] = mapped_column(nullable=False)
 

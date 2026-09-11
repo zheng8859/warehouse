@@ -33,9 +33,19 @@ from sqlalchemy.orm import Session
 
 from app.core import enums as shared_enums
 from app.core.concurrency import assert_lock_version, bump_lock_version
-from app.core.enums import AbcClass, Disposition, JobStatus, JobType, LedgerType, VerifyResult
+from app.core.enums import (
+    AbcClass,
+    AccountStatus,
+    Disposition,
+    JobStatus,
+    JobType,
+    LedgerType,
+    Role,
+    VerifyResult,
+)
 from app.core.errors import StateConflict
 from app.models.base import Base
+from app.models.identity import Account
 from app.models.job import (
     Deviation,
     DeviationCauseKind,
@@ -67,6 +77,9 @@ BATCH_NO = "GJP2571221"
 
 #: 批量批次号 —— **合成值**：15 §3.3 只说「一次批量生成一个批次」，未给格式。
 BULK_BATCH_NO = "BULK-20260908-01"
+
+#: 账号用户名 —— **合成值**：文档只给字段不给样本（13 §5.2）。
+ACCOUNT_USERNAME = "gtj_keeper"
 
 #: 17 §10.1 的入库推荐理由（6 因子权重的取值原样照抄）。
 REASONS_JSON = {
@@ -122,6 +135,30 @@ def _plan(session: Session, job_order: JobOrder, **overrides) -> RecommendationP
     return row
 
 
+def _account(session: Session) -> Account:
+    """账号。台账的操作人与作业单的确认人共用它（§5 起这两列是**真外键**）。
+
+    先查后建：一个用例里可能造多张台账，各建一个账号会撞 `username` 的全局唯一约束。
+    """
+    existing = session.execute(
+        select(Account).where(Account.username == ACCOUNT_USERNAME)
+    ).scalar_one_or_none()
+    if existing is not None:
+        return existing
+
+    row = Account(
+        warehouse_id=WAREHOUSE,
+        username=ACCOUNT_USERNAME,
+        # bcrypt 哈希的真实形态（60 字符）；这里不求可验证，只要形态对。
+        password_hash="$2b$12$" + "0" * 53,
+        role=Role.WAREHOUSE_KEEPER,
+        status=AccountStatus.ACTIVE,
+    )
+    session.add(row)
+    session.flush()
+    return row
+
+
 def _ledger(session: Session, job_order: JobOrder, **overrides) -> Ledger:
     """台账。默认值 = 一张入库台账：**只有目标库位，没有源库位**（15 附录A 的字段矩阵）。"""
     fields = {
@@ -131,9 +168,9 @@ def _ledger(session: Session, job_order: JobOrder, **overrides) -> Ledger:
         "material_name": MATERIAL_NAME,
         "batch_no": BATCH_NO,
         "qty": 40,
-        # 操作人是必填（15 附录A 三类台账都 ✅）。此处的 1 是**占位整数** ——
-        # 账号表属身份链 §5，本阶段这一列还没有外键可指（见 app/models/job.py 第 11 条）。
-        "operator_id": 1,
+        # 操作人是必填（15 附录A 三类台账都 ✅）。§4 时这里填的是占位整数 1
+        # （账号表尚未落地）；§5 补上外键后必须指向**真实账号**。
+        "operator_id": _account(session).id,
         "source_location_code": None,
         "target_location_code": "010104",
         "executed_at": datetime(2026, 9, 8, 8, 0),
@@ -612,19 +649,38 @@ def test_second_ledger_for_the_same_job_order_is_rejected(session: Session) -> N
 
 
 def test_ledger_type_rejected_by_db_check(session: Session) -> None:
-    """台账类型同样受 D3 两层约束（17 §九⑤）。"""
-    job = _job_order(session)
+    """台账类型同样受 D3 两层约束（17 §九⑤）。
 
-    with pytest.raises(IntegrityError):
+    **这条用例刻意不点名是哪条 CHECK**：第四个类型必然同时违反两条 —— 库位矩阵那条
+    （`ck_ledgers_location_columns_by_type` 的三个析取项全按三个合法类型写死）与类型
+    那条。命中顺序由 DDL 里约束的先后决定，钉死它等于把约束的书写顺序变成契约。
+    要点是「绕过 ORM 的写入被库层拒绝」，故断言约束**出自 ledgers**。
+
+    `operator_id` 指向真账号（§5 起有外键）—— 否则这一行会先撞外键，
+    用例就变成了在测外键而不是在测取值约束。
+    """
+    job = _job_order(session)
+    account = _account(session)
+
+    with pytest.raises(IntegrityError) as excinfo:
         session.execute(
             text(
                 "INSERT INTO ledgers "
                 "(warehouse_id, job_order_id, ledger_type, order_no, material_code, batch_no, "
                 " qty, operator_id, executed_at, degraded, created_at) "
-                "VALUES (:w, :j, 'TRANSFER', 'PO-RAW', :m, :b, 1, 1, :now, 0, :now)"
+                "VALUES (:w, :j, 'TRANSFER', 'PO-RAW', :m, :b, 1, :op, :now, 0, :now)"
             ),
-            {"w": WAREHOUSE, "j": job.id, "m": MATERIAL_CODE, "b": BATCH_NO, "now": NOW},
+            {
+                "w": WAREHOUSE,
+                "j": job.id,
+                "m": MATERIAL_CODE,
+                "b": BATCH_NO,
+                "op": account.id,
+                "now": NOW,
+            },
         )
+
+    assert "ck_ledgers_" in str(excinfo.value)
     session.rollback()
 
 
@@ -956,3 +1012,50 @@ def test_payload_json_is_stored_canonically(session: Session) -> None:
     assert raw == json.dumps({"物料": "PET500 茉莉柚茶", "b": 1, "a": 2},
                              ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     assert "\\u" not in raw
+
+
+# ------------------------------------------------------------------ §5 销账：指向账号的两条外键
+
+def test_ledger_operator_must_be_an_existing_account(session: Session) -> None:
+    """`ledgers.operator_id` 的外键（tasks 9.4d① 销账）。
+
+    §4 落地台账时账号表尚未建模 —— 目标表不在 `Base.metadata` 里，`ForeignKey` 一声明
+    就在编译 DDL 时抛 `NoReferencedTableError`，整组测试与建表都跑不起来。故当时按
+    「必填整数、无外键」落列，把这条外键记在 9.4d① 由 §5 补。
+
+    「谁执行的」是台账的必要信息（15 §7.3 追溯链），指向一个不存在的账号等于没有来源。
+    """
+    job = _job_order(session)
+    account = _account(session)
+
+    with pytest.raises(IntegrityError) as excinfo:
+        _ledger(session, job, operator_id=account.id + 999)
+
+    assert "FOREIGN KEY" in str(excinfo.value).upper()
+    session.rollback()
+
+
+def test_job_order_confirmer_must_be_an_existing_account(session: Session) -> None:
+    """`job_orders.confirmed_by_id` 的外键（tasks 9.4d① 销账）。
+
+    确认人是二次确认卡的责任人（15 §7.2「未确认不产生台账」）—— 单据上写着「已确认」
+    却指不到人，这条红线就查不下去。同样由 §5 补上外键。
+    """
+    job = _job_order(session, status=JobStatus.CONFIRMED, disposition=Disposition.ACCEPT)
+
+    with pytest.raises(IntegrityError) as excinfo:
+        job.confirmed_by_id = 999_999
+        session.flush()
+
+    assert "FOREIGN KEY" in str(excinfo.value).upper()
+    session.rollback()
+
+
+def test_confirmer_points_at_the_account_table() -> None:
+    """两条外键的目标都是 `accounts.id`（同一断言的模型侧，迁移侧由空 diff 守卫看住）。"""
+    for table, column in (("job_orders", "confirmed_by_id"), ("ledgers", "operator_id")):
+        targets = {
+            fk.target_fullname
+            for fk in Base.metadata.tables[table].c[column].foreign_keys
+        }
+        assert targets == {"accounts.id"}, f"{table}.{column} 指向了意外的表：{targets}"

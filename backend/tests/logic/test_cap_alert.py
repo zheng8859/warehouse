@@ -28,8 +28,9 @@ from sqlalchemy.exc import IntegrityError, StatementError
 from sqlalchemy.orm import Session
 
 from app.core import enums as shared_enums
-from app.core.enums import ImportStatus, JobStatus, JobType, LedgerType
+from app.core.enums import AccountStatus, ImportStatus, JobStatus, JobType, LedgerType, Role
 from app.models.base import Base
+from app.models.identity import Account
 from app.models.job import JobOrder, Ledger
 from app.models.linkage import AlertKind, CapAlert, ImportSession, Snapshot
 
@@ -64,10 +65,21 @@ def _snapshot(session: Session) -> Snapshot:
 
 
 def _ledger(session: Session) -> Ledger:
-    """最小父链：作业单 → 台账。台账事务号就是 `Ledger.id`。
+    """最小父链：账号 → 作业单 → 台账。台账事务号就是 `Ledger.id`。
 
     §3 的 `CapAlert.ledger_txn_id` 只是个整数；§4 之后它是真外键，指向的行必须存在。
+    §5 起 `operator_id` 也成了真外键，故这里先造一个账号 —— §4 时它填的还是占位整数。
     """
+    account = Account(
+        warehouse_id=WAREHOUSE,
+        username="gtj_keeper",
+        password_hash="$2b$12$" + "0" * 53,
+        role=Role.WAREHOUSE_KEEPER,
+        status=AccountStatus.ACTIVE,
+    )
+    session.add(account)
+    session.flush()
+
     job_order = JobOrder(
         warehouse_id=WAREHOUSE,
         order_no="3573743144K55G",
@@ -88,7 +100,7 @@ def _ledger(session: Session) -> Ledger:
         material_code=job_order.material_code,
         batch_no="GJP2571221",
         qty=job_order.qty,
-        operator_id=1,  # 占位整数：账号表属 §5，本列此刻无外键可指
+        operator_id=account.id,
         target_location_code="010104",
         executed_at=DATA_TIME,
     )
