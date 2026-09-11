@@ -17,8 +17,8 @@
 
 - [x] 3.1 原子提交，`scope` 必填；验证：`commit-msg` 钩子通过（Conventional Commits 格式），`pre-commit` 的 pytest L1 通过
 - [x] 3.2 `/opsx:archive` 归档并把 delta 同步进 `openspec/specs/auth/spec.md`；验证：`openspec validate --specs` 3 passed / 0 failed，且 `openspec show auth --type spec` 能看到新场景「凭据校验的 401 保留失败原因」、旧表述已消失
-- [ ] 3.3 `git merge --no-ff` 回 `main`；验证：`git log --oneline -1` 显示 merge commit，工作区干净
+- [x] 3.3 `git merge --no-ff` 回 `main`；验证：`git log --oneline -1` 显示 merge commit，工作区干净 —— 合并落点 `f0f591c`
 
-> **是否打标签留待决定**：`CLAUDE.md` §6.1 的标签节奏是「每个阶段一个 `v0.N.0`」，
-> 未定义非阶段变更的补丁号。本 change 不改对外行为，故 `v0.2.1` 与否是发布口径问题，
-> 由项目所有者定，不在本任务清单里预设。
+> **未打标签**：`CLAUDE.md` §6.1 的标签节奏是「每个阶段一个 `v0.N.0`」，未定义非阶段变更的
+> 补丁号。本 change 不改对外行为，故 `v0.2.1` 与否是发布口径问题，由项目所有者定；
+> 本次决定不打，`v0.2.0` 仍是 `main` 上最新的标签。
