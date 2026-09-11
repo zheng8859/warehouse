@@ -47,9 +47,15 @@ class Settings(BaseSettings):
     #: 生产必须通过 WMS_JWT_SECRET 覆盖。
     jwt_secret: str = "dev-only-insecure-change-me"
     #: 13 号未指定签名算法 —— 开发阶段决策，对称密钥 + 单应用部署下 HS256 足够。
+    #: **不支持协商**：security.py 固定用这个值，头部里的 alg 只被核对、不参与选择。
     jwt_algorithm: str = "HS256"
     #: 13 §7.1：建议 8 小时（一个班次），超时重新登录。无 refresh token。
     session_hours: int = 8
+    #: bcrypt 成本因子。12 是 bcrypt 库的默认量级，单次约 0.28s（本机实测）——
+    #: 登录是低频动作，这个代价换的是离线爆破成本。测试把它降到 4（每次约 0.001s），
+    #: 否则几十次哈希就把整包推出 pre-commit 的 L1 门禁（<5s）；
+    #: 生产侧由 assert_production_safe 挡住低于 12 的取值。
+    bcrypt_cost: int = 12
 
     # ------------------------------------------------------------ 容量与阈值（16 §10.6）
     #: 近站台预留比例，仅近站台巷道参与预留计算。
@@ -105,6 +111,10 @@ class Settings(BaseSettings):
             # 允许，但必须是显式配置的持久化路径而非默认相对路径。
             if "./data/" in self.database_url:
                 raise RuntimeError("生产环境请显式配置 WMS_DATABASE_URL 的绝对路径")
+        if self.bcrypt_cost < 12:
+            # 不许把测试用的低成本因子带到生产 —— 它是**唯一**能调低口令哈希强度
+            # 的旋钮，而调低它不会有任何功能表现异常。
+            raise RuntimeError("生产环境 bcrypt_cost 不得低于 12（测试用低成本因子）")
 
 
 settings = Settings()

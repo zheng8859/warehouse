@@ -255,8 +255,25 @@
 
 ## 7. 认证
 
-- [ ] 7.1 `app/core/security.py`：`bcrypt` 哈希与校验（不用 passlib），并处理超过 72 字节的输入（给出明确错误而非 500）；验证：`tests/logic/test_security.py` 覆盖「正确口令通过」「错误口令不通过」「超长口令给出明确错误」三例
-- [ ] 7.2 凭据签发与校验（标准库 `hmac` + `hashlib` + `base64` + `json`，只认 HS256，不解析算法协商；比较用 `hmac.compare_digest`）；验证：`tests/logic/test_token.py` 覆盖「签发后校验通过」「篡改载荷被拒」「错误签名被拒」「过期被拒」四例（`26` 完成标准 #2）
+- [x] 7.1 `app/core/security.py`：`bcrypt` 哈希与校验（不用 passlib），并处理超过 72 字节的输入（给出明确错误而非 500）；验证：`tests/logic/test_security.py` 覆盖「正确口令通过」「错误口令不通过」「超长口令给出明确错误」三例
+      （已完成。三例之外补 6 例，都对应**会静默失效**的失败模式：加盐（两次哈希必须不同，否则一张彩虹表解全系统）；
+      **按字节而非字符**判长度（`汉`×24 = 72 字节可过、×25 = 75 字节必须报错 —— 按字符判会放行 75 字节，
+      而 bcrypt 只取前 72 字节，于是「24 个汉字」与「24 个汉字 + 1」互相通过）；畸形哈希返回 `False` 而非抛
+      （抛出去就是 500，而 500 与 401 的差别本身是探测面）；非 ASCII 口令按 UTF-8 往返。
+      新增 `settings.bcrypt_cost`（默认 **12**，单次约 0.28s 本机实测）：测试经 autouse fixture 降到 4（约 0.001s），
+      否则本文件与 `test_auth.py` 合计几十次哈希会把整包推出 pre-commit 的 L1 门禁（<5s）——
+      `assert_production_safe()` 拒绝 prod 下低于 12 的取值，堵住「测试旋钮带到生产」这条路）
+- [x] 7.2 凭据签发与校验（标准库 `hmac` + `hashlib` + `base64` + `json`，只认 HS256，不解析算法协商；比较用 `hmac.compare_digest`）；验证：`tests/logic/test_token.py` 覆盖「签发后校验通过」「篡改载荷被拒」「错误签名被拒」「过期被拒」四例（`26` 完成标准 #2）
+      （已完成。会话半段由 PyJWT 改写为自实现 HS256（D7），`requirements.txt` 里的 `PyJWT==2.13.0` 钉子同步移除，
+      并由 `tests/logic/test_token.py` 的 AST 断言守住「不再引入 `jwt`/`jose`/`authlib`」。
+      解析顺序固定为**结构 → 算法 → 签名 → 载荷语义**：签名验的是前两段**原文**（验解析后的对象会因 JSON 键序重排而错误通过），
+      头部的 `alg` 只被核对、不参与选择。四例之外补 12 例，其中两例专打自实现特有的失效模式：
+      `alg=none`（含两段式与空签名段）与**算法混淆**（头写 `HS512`、签名按 SHA-512 算 —— 这一例需要真知道密钥，
+      故它考的是「算法协商被排除」而非「不验签」）；另有段数/非法 base64/非 JSON 载荷一律 `SessionInvalid`（不得漏成 500）、
+      缺 claim 报错须**指名**缺了哪个字段、`None`/`bytes`/`int` 入参不抛类型错。
+      两处口径取严：`exp` 边界为**到期即失效**（`now >= exp`，08:00 签发 → 16:00 起 401）；
+      `now` 必须带时区（朴素时间的 `timestamp()` 按**本机**时区解释，会让同一份代码在开发机与服务器上给出不同的 `exp`）。
+      claims 集合封闭为 `SESSION_CLAIMS`（13 §7.2 逐字的五个 + `warehouse_id`），逐字比对而非「包含」）
 - [ ] 7.3 账号状态机迁移表（`pending → active|rejected`、`active → disabled`、`disabled → active`）；验证：`tests/logic/test_account_state.py` 断言 `rejected → active` 被拒（spec `auth`「账号状态迁移」）
 - [ ] 7.4 `/api/auth/login` 端点（免认证、返回凭据、首次登录标记须改密）；验证：`tests/api/test_auth.py` 断言未携带凭据时返回 200 与凭据
 - [ ] 7.5 登录失败语义：用户名不存在与口令错误**返回一致**的 401，不泄露账号是否存在；验证：同文件断言两次响应状态与响应体一致
