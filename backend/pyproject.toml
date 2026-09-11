@@ -1,0 +1,30 @@
+[project]
+name = "warehouse-slot-recommender"
+version = "0.1.0"
+description = "成品库位智能推荐 — 物料号级集中就近落位推荐引擎（单厂 GTJ10036 试点）"
+# ★ 仅在 Python 3.14.4 上实测过；3.11~3.13 未验证。
+requires-python = ">=3.11"
+readme = "README.md"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q --tb=short"
+# L1 单元须 < 5 秒（00-总体开发方案 §4.3 pre-commit 门禁）。
+# 三层 TDD 的目录划分见 tests/models、tests/api、tests/logic。
+markers = [
+    "model: 模型测试（CRUD + 约束 + 默认值）",
+    "api: API 测试（端点行为 + 认证 + 错误处理）",
+    "logic: 逻辑测试（6 因子评分 / 批量分配 / 状态机 / cap 计算 / 降级链）",
+]
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["app/llm/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]

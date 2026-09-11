@@ -1,0 +1,60 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+dist/
+build/
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# ---- 数据库（SQLite + WAL 副产物）----
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+backend/data/*.db*
+
+# ---- 环境与密钥 ----
+.env
+.env.*
+!.env.example
+
+# ---- 导入原文件（留存 ≥30 天，但不入库）----
+backend/data/imports/
+*.xlsx
+*.csv
+
+# ---- graphify 图谱产物（派生物，非事实来源）----
+# 不入库：可从源码重建（graphify extract ./backend --code-only，约 4 秒）；
+# 且 .graphify_root 存的是本机绝对路径，入库等于把机器路径焊进 git。
+graphify-out/
+
+# ---- 编辑器 / 系统 ----
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ---- 临时文件与日志 ----
+*.log
+*.tmp
+.cache/
+
+# ---- Node（本项目前端零构建，无 node_modules；此处为防御性忽略）----
+node_modules/
+
+# ---- 项目专用：本地记忆 / 运行态，不入库 ----
+.workbuddy/
+
+# ---- Claude Code 本机专属配置（文件名带 .local，换机无意义）----
+# 注意：.claude/skills/ 与 .claude/commands/ 是 OpenSpec 集成，属项目配置，要入库。
+.claude/settings.local.json

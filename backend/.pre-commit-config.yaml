@@ -1,0 +1,41 @@
+# 质量门禁 —— 事实来源：00-总体开发方案 §4.3
+#
+#   pre-commit  →  pytest tests/ --tb=short -x     (L1 单元，<5 秒)
+#   commit-msg  →  验证 Conventional Commits 格式
+#   pre-push    →  run_evals --tier all --compare baseline.json  (劣化 >5% 阻断)
+#
+# Conventional Commits（00 §4.2）：
+#   <type>(<scope>): <subject>
+#   type : feat / fix / test / refactor / docs / chore / perf
+#   scope: model / auth / engine / job / import / cap / eval / ui / golden-NNN
+#
+# 前置：pip install pre-commit && pre-commit install --hook-type pre-commit \
+#         --hook-type commit-msg --hook-type pre-push
+
+repos:
+  - repo: local
+    hooks:
+      - id: pytest-l1
+        name: pytest L1 单元 (<5s)
+        entry: python -m pytest tests/ --tb=short -x -q
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      - id: conventional-commit
+        name: 校验 Conventional Commits 格式
+        entry: python scripts/check_commit_msg.py
+        language: system
+        stages: [commit-msg]
+
+      # ⚠️ 阶段六（文档 30）实现 Evals 后取消注释。
+      # 现在启用会让每次 push 都失败 —— evals/run_evals.py 尚未实现任何评测，
+      # 它刻意以退出码 3 失败，以防出现"钩子跑了但什么都没检查"的静默通过。
+      # - id: evals-baseline
+      #   name: Evals 全量 + 基线对比（劣化 >5% 阻断）
+      #   entry: python evals/run_evals.py --tier all --compare evals/baseline.json
+      #   language: system
+      #   pass_filenames: false
+      #   always_run: true
+      #   stages: [pre-push]
