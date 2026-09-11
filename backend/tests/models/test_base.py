@@ -80,6 +80,37 @@ def test_utcnow_is_naive_utc() -> None:
     assert abs((wall - now).total_seconds()) < 5
 
 
+#: 软删除那一族的列名片段（小写子串匹配）。17 号与 CLAUDE.md §七的留存策略是
+#: 「**归档不删除** + 版本化」——「删除」以状态字段与版本号表达，不新开一列布尔。
+_SOFT_DELETE_MARKERS: tuple[str, ...] = ("delet", "archiv", "remov", "soft_delete", "is_active")
+
+
+def test_no_entity_anywhere_declares_a_soft_delete_column() -> None:
+    """遍历 `Base.metadata` 的**全部**表：没有一张带软删除族列。
+
+    分组测试（`test_master_data` / `test_linkage` / `test_job` 各一条）只看自己那组表，
+    配置 / 对话 / KPI / 账号那 7 张表当时不在任何一条的射程内。这里按 metadata 全量
+    扫描，**加一张新表就自动进入范围**，不必记得去补一条断言。
+
+    软删除真正的代价不是多一列，而是它让「行存在」与「行有效」变成两件事 ——
+    于是每一处查询都得记得带上那个条件，漏一处就是一次静默的数据泄漏；而本产品的
+    验收基线（集中度、采纳率）恰恰建立在「台账只有一套、且不可被过滤掉一部分」上。
+
+    断言写成「列名里不含这些片段」而不是逐个列名黑名单：前者连 `deleted_by`、
+    `is_archived`、`soft_deleted_at` 这类变体一并拦住，后者只拦得住想得到的写法。
+    """
+    assert len(Base.metadata.tables) == 23, "先修这个：表数为 0 时本用例会空过"
+
+    offenders = [
+        f"{table.name}.{column.name}"
+        for table in Base.metadata.tables.values()
+        for column in table.columns
+        if any(marker in column.name.lower() for marker in _SOFT_DELETE_MARKERS)
+    ]
+
+    assert offenders == [], f"不得引入软删除列（17 号：归档不删除 + 版本化）：{offenders}"
+
+
 # ------------------------------------------------------------------ 枚举列工厂（D3）
 
 def test_enum_column_persists_values_not_names() -> None:
