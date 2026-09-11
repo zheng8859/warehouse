@@ -9,15 +9,42 @@
 #   type : feat / fix / test / refactor / docs / chore / perf
 #   scope: model / auth / engine / job / import / cap / eval / ui / golden-NNN
 #
-# 前置：pip install pre-commit && pre-commit install --hook-type pre-commit \
+# 前置：从 backend/ 目录执行（本文件不在仓库根，install 需在此处运行才能被找到）：
+#   pip install pre-commit
+#   PYTHONUTF8=1 pre-commit install --hook-type pre-commit \
 #         --hook-type commit-msg --hook-type pre-push
+#
+# ⚠️ 三条前提，动本文件或重装钩子时务必遵守：
+#
+#   0. **install 必须带 `PYTHONUTF8=1`**，否则钩子在含非 ASCII 的路径下完全不可用。
+#      成因：pre-commit 用 `open(path, 'w')` 写钩子脚本（install_uninstall.py:92），
+#      编码取 locale 默认值 —— 本机 cp936。而 Git 的 sh 按 UTF-8 解释脚本字节，
+#      于是脚本里那条绝对路径（本仓库路径含中文）解析不出来，`[ -x ]` 判假，
+#      落到底部的 "pre-commit not found" 兜底分支 → **每一次提交都失败**。
+#      PYTHONUTF8=1 让 Python 以 UTF-8 写脚本，从源头消除编码错配；
+#      不这样做也可以靠"提交前先激活 venv"让兜底分支找到 pre-commit，但那
+#      绕不过 VS Code / 新开终端等入口，别依赖它。
+#
+#   以下两条是 entry 的路径前提，改 entry 时遵守：
+#
+#   1. 钩子运行时 cwd = **git 仓库根**，不是本文件所在的 backend/。
+#      （pre-commit 永远 chdir 到仓库根。）所以下面每条 entry 的路径都相对仓库根：
+#      `backend/tests`、`backend/scripts/...`。写成 `tests/` 会以 exit 4 失败。
+#
+#   2. backend/ 下的 pytest 配置为 `pythonpath = ["."]`，它相对 rootdir 解析。
+#      cwd 既已在仓库根，就必须用 `-c backend/pyproject.toml` 把 rootdir 钉回 backend/，
+#      否则 app 包不在 sys.path 上，测试会以 ImportError 失败。
+#
+#   `language: system` 下 entry 里的 `python` 走 PATH（不是 .git/hooks 里记录的
+#   venv 解释器）—— 该解释器必须能 import app 的依赖。本项目刻意不用
+#   `language: python` + additional_dependencies：那会在钩子运行时联网装包。
 
 repos:
   - repo: local
     hooks:
       - id: pytest-l1
         name: pytest L1 单元 (<5s)
-        entry: python -m pytest tests/ --tb=short -x -q
+        entry: python -m pytest -c backend/pyproject.toml backend/tests --tb=short -x -q
         language: system
         pass_filenames: false
         always_run: true
@@ -25,7 +52,7 @@ repos:
 
       - id: conventional-commit
         name: 校验 Conventional Commits 格式
-        entry: python scripts/check_commit_msg.py
+        entry: python backend/scripts/check_commit_msg.py
         language: system
         stages: [commit-msg]
 
@@ -34,7 +61,7 @@ repos:
       # 它刻意以退出码 3 失败，以防出现"钩子跑了但什么都没检查"的静默通过。
       # - id: evals-baseline
       #   name: Evals 全量 + 基线对比（劣化 >5% 阻断）
-      #   entry: python evals/run_evals.py --tier all --compare evals/baseline.json
+      #   entry: python backend/evals/run_evals.py --tier all --compare backend/evals/baseline.json
       #   language: system
       #   pass_filenames: false
       #   always_run: true
