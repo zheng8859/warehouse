@@ -124,6 +124,52 @@ def test_migration_builds_master_data_tables(migrated_engine: Engine) -> None:
     assert "alembic_version" in names, "建库经迁移的标志（D8）"
 
 
+# ---------------------------------------------------------------- 6.7 阶段二终点：23 个实体
+
+#: 17 号四条数据链 + 度量 / 身份 / 配置 —— 23 个实体，按 17 §一 的分组。
+#: 主数据 6 · 衔接 5 · 作业 5 · KPI 1 · 身份 1 · 配置 5。
+ALL_ENTITY_TABLES = frozenset({
+    # 主数据链
+    "warehouses", "aisles", "locations", "aisle_stations", "materials", "batches",
+    # 衔接链
+    "import_sessions", "snapshots", "inventory_items", "aisle_caps", "cap_alerts",
+    # 作业链
+    "job_orders", "recommendation_plans", "ledgers", "verifications", "deviations",
+    # 度量与身份
+    "kpi_snapshots", "accounts",
+    # 配置与对话
+    "weight_configs", "capacity_configs", "field_mapping_configs",
+    "prompt_templates", "conversation_contexts",
+})
+
+
+def test_migration_builds_exactly_the_twenty_three_entities(migrated_engine: Engine) -> None:
+    """`alembic upgrade head` 后**恰好** 23 张实体表（本阶段的终检，spec「23 实体」）。
+
+    断言取**等于**而不是「包含」：多一张是有人绕开迁移建了表（`autogenerate` 迟早
+    想删掉它，或更糟 —— 它悄悄留在库里成为第二套事实来源），少一张是某个实体的迁移
+    没落地。两种都是这一阶段要拦住的，而「包含」两种都拦不住。
+    """
+    names = set(inspect(migrated_engine).get_table_names()) - {"alembic_version"}
+
+    assert len(ALL_ENTITY_TABLES) == 23, "常量本身写错了，先修这个"
+    assert names == ALL_ENTITY_TABLES, (
+        f"多出：{names - ALL_ENTITY_TABLES}；缺少：{ALL_ENTITY_TABLES - names}"
+    )
+
+
+def test_metadata_declares_exactly_the_twenty_three_entities() -> None:
+    """模型侧的同一件事：`Base.metadata` 里也是这 23 张表。
+
+    上面的迁移断言验「库里有什么」，这条验「模型声明了什么」—— 两者一起才能说明
+    「模型与迁移一一对应」。只查库，漏掉一个实体的模型会让 `create_all` 的内存测试库
+    少一张表（D12 下模型才是测试库的事实来源），而真实库看起来完全正常。
+    """
+    from app.models.base import Base
+
+    assert set(Base.metadata.tables) == ALL_ENTITY_TABLES
+
+
 def test_migration_keeps_enum_check_constraint(migrated_engine: Engine) -> None:
     """库里的 `abc_class` CHECK 必须真的存在。
 

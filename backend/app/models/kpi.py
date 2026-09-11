@@ -27,8 +27,8 @@
    （是哪个指标的环比、单值还是分指标各一个）。用单值列等于替文档定口径，
    故落 JSON 能装下任何口径，待 18 补口径后再收紧成数值列 + 迁移（登记在 9.4e②）。
    另：`18` §「历史 KpiSnapshot 保留旧口径，趋势对比须同口径」要求的**口径版本引用**
-   本阶段不落列 —— 目标 `CapacityConfig` 属 §6（尚未建模），同 §3/§4 的延期外键处理，
-   登记在 9.4e③。
+   由 `capacity_config_id` 落列 —— 目标 `CapacityConfig` 属 §6，与 §3/§4 的延期外键
+   同一处置（§6 落地时用 `batch_alter_table` 补上，9.4e③ 据此销账）。
 
 KpiSnapshot 是**周期快照**（18 §4.1 的确定性三层聚合产物），与台账同为不可改写的
 历史：18 §「历史 KpiSnapshot 保留旧口径」要求趋势对比不被口径变更污染。本表因此
@@ -120,6 +120,16 @@ class KpiSnapshot(BaseEntity):
 
     #: 环比（模块 docstring 第 4 条）。首期为 NULL —— 上一期不存在。
     period_over_period_json: Mapped[dict | None] = mapped_column(sa.JSON, nullable=True)
+
+    #: 算出本行时**生效的容量与阈值口径**（18 §「历史 KpiSnapshot 保留旧口径，
+    #: 趋势对比须同口径」）。指向 `capacity_configs` 的**行**而不是存版本号：
+    #: 行有唯一约束、可被外键看住，与 D1 拒绝把时间戳串当配置引用是同一条理由。
+    #: 可空 —— `PENDING` / `ERROR` 的行还没算，自然没有口径版本（模块 docstring 第 2 条）。
+    #: 不看 `effective_at` 反查：反查得到的是「现在生效的版本」，而本列要记的是
+    #: 「当时生效的版本」—— 两者在口径变更后必然不同，而趋势图正是要跨过那次变更。
+    capacity_config_id: Mapped[int | None] = mapped_column(
+        sa.ForeignKey("capacity_configs.id"), nullable=True
+    )
 
     #: KPI 卡片（17 §10.6 的 JSON，D4 落列）。承载「各指标值与阈值、PASS/DEVIATION
     #: 判定」的展示形状 —— 与上面的散列是同一批数的两种形态：散列供查询与聚合，
