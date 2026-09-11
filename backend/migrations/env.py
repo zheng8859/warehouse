@@ -92,7 +92,12 @@ def include_object(object_, name, type_, reflected, compare_to) -> bool:
 
 
 def _run_migrations(connection) -> None:
-    """在给定连接上跑迁移。两个入口（应用引擎 / 调用方自带）共用同一套 configure。"""
+    """在给定连接上跑迁移。
+
+    **在线**的两条路径共用这里：默认路径自开引擎（应用引擎），调用方自带连接时
+    用调用方的（`tests/models/test_migrations.py` 的临时库）。**离线**路径不走这里 ——
+    它拿不到连接，只能自己 configure（见 `run_migrations_offline`）。
+    """
     context.configure(
         connection=connection,
         target_metadata=target_metadata,
@@ -108,7 +113,8 @@ def run_migrations_offline() -> None:
     """离线模式：只生成 SQL，不连库。
 
     离线模式下拿不到反射结果，故 `include_object` 的反射分支不会触发；
-    仍传入以保持两个入口的 configure 完全一致。
+    仍传入以保持与在线路径的 configure 一致（两处的参数逐项对齐，
+    差别只有「连接 vs URL + literal_binds」，改动时须两边同步）。
     """
     context.configure(
         url=settings.database_url,
