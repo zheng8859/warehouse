@@ -274,7 +274,17 @@
       两处口径取严：`exp` 边界为**到期即失效**（`now >= exp`，08:00 签发 → 16:00 起 401）；
       `now` 必须带时区（朴素时间的 `timestamp()` 按**本机**时区解释，会让同一份代码在开发机与服务器上给出不同的 `exp`）。
       claims 集合封闭为 `SESSION_CLAIMS`（13 §7.2 逐字的五个 + `warehouse_id`），逐字比对而非「包含」）
-- [ ] 7.3 账号状态机迁移表（`pending → active|rejected`、`active → disabled`、`disabled → active`）；验证：`tests/logic/test_account_state.py` 断言 `rejected → active` 被拒（spec `auth`「账号状态迁移」）
+- [x] 7.3 账号状态机迁移表（`pending → active|rejected`、`active → disabled`、`disabled → active`）；验证：`tests/logic/test_account_state.py` 断言 `rejected → active` 被拒（spec `auth`「账号状态迁移」）
+      （已完成，落在新模块 `app/core/account_state.py` —— 与 `state_machine.py` **分成两个模块**：
+      两张表服务两个主体（作业单由操作员按流程推进、账号由管理员按权限动作推进），取值域也不同（七值 vs 四值），
+      合表会让「键是哪种状态」变成调用方要先判断的事；共用的是**形状**（只读迁移表 + 类型守卫 + 返回目标态），
+      不是内容，形状的复用靠约定而非继承。4 状态 16 有序对逐对穷举，合法 4 / 非法 12；
+      另断言三条**与作业单状态机刻意相反**的口径：这里**无合法自环**（作业单的 `PENDING → PENDING` 是「分配失败可重试」）、
+      **终态只有 `rejected`**（`disabled → active` 存在，故停用是可达回的中转态，判据是出边而非「还能不能登录」这种语感）、
+      `rejected` 四条出边全拒。类型守卫比 `JobStatus` 那处更深一层：`AccountStatus` 是 lowercase 的 str 枚举，
+      `AccountStatus.ACTIVE == "active"` 为真而 `Enum.__hash__` 取成员名 ——「值比较通过、哈希查表失败」是同一份数据的两套语义，
+      故裸字符串（含大写成员名）一律 `TypeError` 而非 `KeyError`/「非法迁移」。AST 断言无 IO 依赖。
+      **本阶段没有消费者**：账号管理的写端点属路线图（与 D9 同批），本阶段交付的是数据 + 纯判定函数 + 全组合断言）
 - [ ] 7.4 `/api/auth/login` 端点（免认证、返回凭据、首次登录标记须改密）；验证：`tests/api/test_auth.py` 断言未携带凭据时返回 200 与凭据
 - [ ] 7.5 登录失败语义：用户名不存在与口令错误**返回一致**的 401，不泄露账号是否存在；验证：同文件断言两次响应状态与响应体一致
 - [ ] 7.6 中间件校验凭据中的 `status`，使 `disabled` 账号的旧凭据在下一次请求即失效（无需重启、无服务端黑名单）；验证：同文件断言置 `disabled` 后旧凭据返回 401
