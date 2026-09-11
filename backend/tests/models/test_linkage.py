@@ -499,19 +499,32 @@ def test_inventory_item_status_has_no_check(session: Session) -> None:
     assert stored == {"待检", "报废待定"}
 
 
-def test_inventory_item_zone_and_production_date_are_nullable(session: Session) -> None:
-    """`zone` / `production_date`：17 §3.3 列了，16 A.1 的 INV 模版已移除
+def test_inventory_item_production_date_is_nullable(session: Session) -> None:
+    """`production_date`：17 §3.3 列了它，16 A.1 的 INV 模版已移除
     （「库区号、生产日期不再需要」）—— 保留列但可空，真实导入通常不填。
+
+    同组的 `zone` 已随 `retire-zone-column` 删除，故本用例只剩生产日期一侧。
     """
     snapshot = _snapshot(session)
     row = _item(session, snapshot)
 
-    assert row.zone is None
     assert row.production_date is None
 
-    row.zone = "A"
     row.production_date = date(2026, 9, 5)
     session.flush()  # 填了也要收
+
+
+def test_inventory_item_has_no_zone_column() -> None:
+    """`InventoryItem.zone` 已随 `retire-zone-column` 清退，且**不得加回**。
+
+    断言「不存在」的用例天然有**恒真**的风险，故这里盯的是**模型**而不是已建库：
+    把 `zone` 加回 `InventoryItem` 时本用例必须变红（已人工核对过一次）。
+    只查库抓不到这类漂移 —— 模型加回列而迁移没跟上时，库看起来完全正常，
+    而 `create_all` 建的内存测试库会多出这一列。写法与 `test_no_soft_delete_columns`
+    同款（列名集合断言）。
+    """
+    cols = {c.name for c in Base.metadata.tables["inventory_items"].columns}
+    assert "zone" not in cols
 
 
 def test_inventory_item_has_no_foreign_key_to_master_data() -> None:
