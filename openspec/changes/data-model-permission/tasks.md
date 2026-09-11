@@ -589,4 +589,11 @@
       路线图 RBAC 承担）。两者只有在「账号端点尚不存在」时同时成立 —— 故 9.4g③ 一旦决定本阶段补账号开通端点，
       这条张力必须同时裁决（403 从哪一层来）。**本阶段实现按 permission 那份**（CLAUDE.md §八：v1 只有
       认证中间件 + 矩阵数据，无端点级强制）
-- [ ] 9.5 收尾：分支 `phase-2/data-model-permission` 以 `--no-ff` 合并 `main` 并打 `v0.2.0`；验证：`git tag | grep v0.2.0` 命中，且工作区干净
+- [x] 9.5 收尾：分支 `phase-2/data-model-permission` 以 `--no-ff` 合并 `main` 并打 `v0.2.0`；
+      验证结果 —— 合并提交 `1425b88`（`Merge branch 'phase-2/data-model-permission' into main`，
+      20 个提交、67 个文件、+12419/-142 行）；`v0.2.0` 是**附注标签**且指向 `1425b88`
+      （`git rev-parse v0.2.0^{commit}`）；`git tag` 同时列出 `v0.1.0` / `v0.2.0`；工作区干净。
+      **合并前合并基点即 `main`**（`merge-base = 1033fa0`），故 `--no-ff` 一定产生合并提交，
+      不会退化成快进。合并后复验：**546 passed / 4.57s**、`alembic check` 空 diff。
+      注：合并提交只跑了 commit-msg 钩子（`Merge ` 前缀在校验脚本的 `_BYPASS_PREFIXES` 里），
+      pytest 那条 `pre-commit` 钩子未在合并时运行 —— 上面那两行复验就是补的那一次
