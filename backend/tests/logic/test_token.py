@@ -17,6 +17,8 @@
     不得漏成 500。
   - `exp` 边界：**到期即失效**（08:00 签发 8 小时 → 16:00 起 401），
     对应 spec 的「超过 8 小时后失效」。
+  - **claim 的取值类型**：字段齐全不等于内容合法 —— `user_id` 写成 `{}`、`exp` 写成
+    字符串或 `1e400`，三种都会绕过「字段都在」的检查（见 `_BAD_CLAIM_VALUES`）。
 
 本文件不建库、不用 session：签发与校验是纯函数（`now` 可注入），
 「同样输入必得同样输出」可以逐位断言。
@@ -280,6 +282,83 @@ def test_non_string_token_is_rejected() -> None:
     for candidate in (None, b"bytes", 123):
         with pytest.raises(SessionInvalid):
             decode_session_token(candidate)  # type: ignore[arg-type]
+
+
+# ------------------------------------------------------------------ claim 的取值类型
+
+#: 签名合法、字段齐全、但**取值类型**不对的载荷。
+#:
+#: 这些都不会由本系统签发（`create_session_token` 的签名已经排除了大部分），
+#: 但仍可被伪造 —— 持密钥的一方签得出任意载荷，而「签名对」只证明内容没被第三方
+#: 改过，不证明内容本身合法：密钥轮换前签发的旧凭据、别处按自己理解拼的载荷、
+#: 将来给 claims 加字段时顺手改错的类型，都会落在这里。
+_BAD_CLAIM_VALUES: tuple[tuple[str, object], ...] = (
+    ("user_id", {}),           # dict → session.get() 抛 InvalidRequestError → 500
+    ("user_id", [1, 2]),       # list → 同上
+    ("user_id", "7"),          # 数字串：SQLite 能等值查到，但线上格式是整型
+    ("user_id", None),
+    ("user_id", True),         # bool 是 int 的子类 —— 会去查主键 1
+    ("role", 1),
+    ("role", None),
+    ("status", 123),
+    ("status", None),
+    ("iat", "昨天"),           # iat 现在不参与判定，但同一个 claim 集只认一种形状
+    ("iat", None),
+    ("exp", "abc"),            # 与 moment.timestamp() 比较时 TypeError → 500
+    ("exp", None),
+    ("exp", {}),
+    ("exp", 1e400),            # json 往返成 inf —— 永不过期，连错都不报
+    ("exp", 1_800_000_000.0),  # 浮点：整型秒是线上唯一的形状
+    ("exp", True),
+    ("warehouse_id", 123),
+    ("warehouse_id", None),
+)
+
+
+@pytest.mark.parametrize(
+    ("claim", "value"),
+    _BAD_CLAIM_VALUES,
+    ids=["%s=%r" % (claim, value) for claim, value in _BAD_CLAIM_VALUES],
+)
+def test_malformed_claim_types_are_rejected(claim: str, value: object) -> None:
+    """签名合法、字段齐全，但取值的**类型**不对 → 一律 `SessionInvalid`（→ 401）。
+
+    集合封闭有**两半**：字段都在（`test_missing_claim_is_rejected` 测的那半）、
+    取值类型都对（本函数）。缺后半的后果实测过三种，没有一种是「拒绝」：
+
+      * `user_id` 为 dict → `session.get()` 抛 `InvalidRequestError` → 500
+      * `exp` 为字符串 → 与 `moment.timestamp()` 比较抛 `TypeError` → 500
+      * `exp` 为 `inf`（JSON 文本里写 `1e400`，Python 的 json 收下它）→ **永不超时**
+
+    前两种把 401 变成 500 —— 而 500 与 401 的差别是免费的探测信息，且前端会把它
+    显示成「服务出错了」而不是「请重新登录」。第三种连异常都没有。
+    所以类型要求与「字段齐全」一样，是**校验方不假设签发方是自己**的一部分。
+    """
+    claims = _payload_of(create_session_token(USER_ID, ROLE, STATUS, now=ISSUED_AT))
+    claims[claim] = value
+    forged = _make_token({"alg": "HS256", "typ": "JWT"}, claims, settings.jwt_secret)
+
+    with pytest.raises(SessionInvalid) as excinfo:
+        decode_session_token(forged, now=ISSUED_AT)
+
+    assert claim in str(excinfo.value), "报错须指名哪个字段的类型不对"
+
+
+def test_claim_type_rules_do_not_reject_what_the_issuer_writes() -> None:
+    """对照：本系统签发的载荷逐字通过 —— 类型要求不得把正常路径一起拦下。
+
+    上面那组用例里 `user_id` 全是非法值，只测「该拒的都拒了」而不能说明
+    「该过的还过」。签发路径写的是 `Account.id`（整型）与两个 `.value`（字符串），
+    这条把它们钉住：改 `_CLAIM_TYPES` 时若把 `int` 写成 `str`，这里会红。
+    """
+    claims = decode_session_token(
+        create_session_token(USER_ID, ROLE, STATUS, now=ISSUED_AT), now=ISSUED_AT
+    )
+
+    assert isinstance(claims["user_id"], int) and not isinstance(claims["user_id"], bool)
+    assert (claims["role"], claims["status"], claims["warehouse_id"]) == (
+        ROLE, STATUS, settings.warehouse_code,
+    )
 
 
 # ------------------------------------------------------------------ D7 的结构性约束

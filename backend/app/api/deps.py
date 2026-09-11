@@ -2,9 +2,14 @@
 
 事实来源：13-权限分级与访问控制系统 §六（三层检查）、§8.3（紧急吊销：回查当前状态）
 
+  `session_factory`  → 当前应用的会话工厂（中间件也用同一个）
   `get_db`           → 数据库会话
   `current_account`  → 当前账号（第 1 层认证的产物）
-  `require(resource, action)` → 第 2 层资源级权限检查（路线图 RBAC 的挂载点，见 D9）
+
+**这里没有第 2 层**：矩阵本身在 `app/api/permissions.py`（13 §2.2 的逐条搬运），
+但把它挂成依赖注入（`require(resource, action)` 之类）是路线图 RBAC 的工作 ——
+本阶段不做端点级资源鉴权（design.md D9），故此处**不预置空壳**：一个永远返回
+「允许」的 `require()` 比没有它更糟，读的人会以为某条路径已经被强制了。
 
 ## 会话工厂读的是 `app.state.session_factory`
 
@@ -53,12 +58,17 @@ def get_db(request: Request) -> Generator[Session, None, None]:
         session.close()
 
 
-def load_account(session: Session, account_id: object) -> Account | None:
-    """按主键取账号。`account_id` 来自凭据载荷，故可能是任何 JSON 值。
+def load_account(session: Session, account_id: int) -> Account | None:
+    """按主键取账号。行不在时返回 `None`。
 
-    非整数 id 不会抛错：SQLite 按等值比较，取不到就是 `None` ——
-    于是「伪造一份 `user_id` 类型奇怪的凭据」与「凭据指向已不存在的账号」
-    走同一条路（都是 401），不会分叉出一个 500。
+    于是「凭据指向已不存在的账号」（库被重建、账号被迁移、有人手工改过库）与
+    「账号状态不是 active」走同一条路：401，而不是 500。
+
+    `account_id` 的类型**由 `decode_session_token` 保证**（`_CLAIM_TYPES` 要求非布尔的
+    `int`），所以这里不再自己校验一遍。不校验的理由不是省事：`session.get()` 收到
+    `dict` 会抛 `InvalidRequestError`（不是返回 `None`），写成「反正取不到就是 None」
+    会让这条注释在真出事时是错的。校验只在一处、且在上游 —— 签名标 `int` 把这件事
+    说清楚，越界即调用方的错。
     """
     return session.get(Account, account_id)
 

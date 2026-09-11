@@ -11,7 +11,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -30,7 +29,7 @@ from app.api.routes import (
 )
 from app.core.config import settings
 from app.core.db import SessionLocal
-from app.core.errors import DomainError
+from app.core.errors import DomainError, error_body
 
 logger = logging.getLogger(__name__)
 
@@ -103,13 +102,9 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(DomainError)
     async def _domain_error_handler(request: Request, exc: DomainError) -> JSONResponse:
-        content: dict[str, Any] = {"error": exc.code, "message": exc.message}
-        # `detail` 为 None 时**不出现**这个键：401 有两处产生方（中间件与登录端点），
-        # 前端拦截器按 `error` 分流，两者的形状必须逐字一致 —— 否则它得写两个分支。
-        # 有 detail 的（409 状态冲突、403 权限拒绝）照旧带上。
-        if exc.detail is not None:
-            content["detail"] = exc.detail
-        return JSONResponse(status_code=exc.http_status, content=content)
+        # 形状在 `errors.error_body` —— 中间件（在处理器之外）也调它，故两处的 401
+        # 逐字一致是**结构上**的，不靠两处各自写对。
+        return JSONResponse(status_code=exc.http_status, content=error_body(exc))
 
 
 app = create_app()

@@ -9,7 +9,8 @@
 有效期 8 小时（一个班次，13 §7.1），超时重新登录。
 **无 refresh token、无服务端黑名单**：凭据过期前始终有效；紧急吊销 = 管理员置
 `status=disabled`，下次请求校验即失败（13 §8.3）。因此校验方必须回查账号当前
-状态，不能只信 token 里的 `status` 快照（见 app/api/middleware.py 的 TODO）。
+状态，不能只信 token 里的 `status` 快照 —— 回查发生在 `app/api/middleware.py`
+的第 3 步，本模块只负责「凭据本身通不通过」。
 
 三类开发阶段决策（13 号未规定，均记录在 design.md）：
 
@@ -27,6 +28,10 @@
    - 签名比较用 `hmac.compare_digest`（普通 `==` 的耗时与「猜对多少前缀」相关）。
    - claims 集合封闭且逐字校验：**校验方不假设签发方一定是自己** —— 缺字段若被放过，
      下游会以 `KeyError` 的形式炸成 500，而 500 与 401 的差别本身就是探测面。
+     **「封闭」有两半**：字段都在（`SESSION_CLAIMS`）、且**类型都对**（`_CLAIM_TYPES`）。
+     只查前一半时，一份签名合法但 `user_id` 写成 `{}`、`exp` 写成 `"abc"` 的载荷
+     会一路走到 `session.get()` / 时间比较，炸成 `InvalidRequestError` / `TypeError`
+     —— 又回到 500。签名合法不等于内容合法：密钥只保证「没被第三方改过」。
 
 `create_session_token` 在**同一时刻**签发两次得到同一份凭据（确定性，红线「同样输入
 必得同样输出」）。随机性来自 `iat`/`exp` 时钟，与口令哈希的随机盐是两回事。
@@ -52,6 +57,20 @@ BCRYPT_MAX_PASSWORD_BYTES = 72
 #: 签发时只写这些，校验时逐字要求全在。多一个字段意味着客户端多读到一份数据，
 #: 少一个意味着某处要另存一次。
 SESSION_CLAIMS: tuple[str, ...] = ("user_id", "role", "status", "iat", "exp", "warehouse_id")
+
+#: 每个 claim 的**类型**要求（封闭集合的后半，见模块 docstring 第 3 条第 4 点）。
+#: `role` / `status` 这里只查「是串」；取值是否属于 `Role` / `AccountStatus` 由
+#: 使用方判定 —— 本模块不认识领域枚举，只认识这份线上格式。
+#: `warehouse_id` 不允许 `None`：签发时 `None` 会被替换成当前厂编码，故它在线上
+#: 恒为串；给 `None` 开口子等于让「没带厂」的凭据合法，而那正是多厂前的扩张点。
+_CLAIM_TYPES: tuple[tuple[str, tuple[type, ...]], ...] = (
+    ("user_id", (int,)),
+    ("role", (str,)),
+    ("status", (str,)),
+    ("iat", (int,)),
+    ("exp", (int,)),
+    ("warehouse_id", (str,)),
+)
 
 #: 头部只核对不选择 —— 这个值写死，不从 settings 读（见 D7：不做算法协商）。
 _EXPECTED_HEADER = {"alg": "HS256", "typ": "JWT"}
@@ -131,13 +150,19 @@ def _as_utc(moment: datetime | None, *, field: str) -> datetime:
 
 # --------------------------------------------------------------------- 会话
 def create_session_token(
-    user_id: str | int,
+    user_id: int,
     role: str,
     status: str,
     warehouse_id: str | None = None,
     now: datetime | None = None,
 ) -> str:
-    """签发会话凭据。claims 与 13 §7.2 一一对应，集合封闭。"""
+    """签发会话凭据。claims 与 13 §7.2 一一对应，集合封闭。
+
+    `user_id` 是 `Account.id`（整型代理键）—— 这里标 `int` 而不是 `str | int`，
+    与 `decode_session_token` 的 `_CLAIM_TYPES` 对齐：**自己签的凭据自己必须校验得过**，
+    签名与校验对同一个字段有两种理解时，签发方就会成为第一个受害者。
+    `warehouse_id` 为 `None` 时取当前厂编码，故它在线上恒为串。
+    """
     issued_at = _as_utc(now, field="now")
     payload: dict[str, Any] = {
         "user_id": user_id,
@@ -154,12 +179,26 @@ def create_session_token(
     return f"{head}.{body}.{_b64url_encode(_sign(signing_input))}"
 
 
+def _is_claim_value(value: object, allowed: tuple[type, ...]) -> bool:
+    """claim 取值是否符合类型要求。`bool` 单独排除。
+
+    `bool` 是 `int` 的子类，`isinstance(True, int)` 为真 —— 一份 `user_id: true` 的
+    载荷会去查主键 1（真有个账号时**通过认证**），`exp: false` 则等价于 `exp=0`
+    （永远过期，反而安全）。这类载荷只有持有密钥的人发得出来，故不是攻击面；
+    排除它是为了让「类型对了」这件事不被一个特例悄悄打折。
+    """
+    return not isinstance(value, bool) and isinstance(value, allowed)
+
+
 def decode_session_token(token: str, now: datetime | None = None) -> dict[str, Any]:
     """校验并解析会话凭据。任何问题都抛 `SessionInvalid`。
 
     顺序是刻意的：**结构 → 算法 → 签名 → 载荷语义**。
     签名验证的是**前两段的原文**，不是「解析后的对象」—— 后者会因 JSON 键序重排
     而给出错误的通过。
+
+    载荷语义分两步：字段**都在**（`SESSION_CLAIMS`）→ 取值**类型都对**（`_CLAIM_TYPES`）。
+    两步都在验签之后 —— 验签之前读载荷等于让未认证的数据影响判定顺序。
     """
     if not isinstance(token, str) or not token.strip():
         raise SessionInvalid("缺少会话凭据")
@@ -195,6 +234,13 @@ def decode_session_token(token: str, now: datetime | None = None) -> dict[str, A
     missing = [claim for claim in SESSION_CLAIMS if claim not in claims]
     if missing:
         raise SessionInvalid("会话凭据缺少必要字段: %s" % ", ".join(missing))
+
+    for claim, allowed in _CLAIM_TYPES:
+        if not _is_claim_value(claims[claim], allowed):
+            raise SessionInvalid(
+                "会话凭据的 %s 类型不合法（期望 %s，收到 %s）"
+                % (claim, " / ".join(t.__name__ for t in allowed), type(claims[claim]).__name__)
+            )
 
     moment = _as_utc(now, field="now")
     if moment.timestamp() >= claims["exp"]:

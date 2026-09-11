@@ -34,15 +34,22 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from app.api.deps import assert_account_usable, load_account
+from app.api.deps import assert_account_usable, load_account, session_factory
 from app.core.config import settings
-from app.core.errors import Unauthenticated
+from app.core.enums import Role
+from app.core.errors import Unauthenticated, error_body
 from app.core.security import SessionInvalid, decode_session_token
 
 AUTH_HEADER = "Authorization"
 COOKIE_NAME = "wms_session"
 
-#: 13 §6.1 白名单 —— 精确匹配。
+#: 13 §6.1 白名单 —— 精确匹配，**恰好这四条**。
+#:
+#: 曾经还有一条 `/docs/` 前缀放行（怕 Swagger 页面加载子资源时被拦）。查证后删掉：
+#: `/docs` 由 FastAPI 内联返回，JS/CSS 走 CDN，页面本身不请求任何本站子路径
+#: （`/docs/oauth2-redirect` 只在 API 声明了 oauth2 安全方案时才会被取）。
+#: 白名单每多一条就多一个免认证入口，而它服务的是「将来可能会用到」——
+#: 真加了 oauth2 再连同这条注释一起恢复。
 WHITELIST_EXACT = frozenset(
     {
         "/api/auth/login",
@@ -52,12 +59,9 @@ WHITELIST_EXACT = frozenset(
     }
 )
 
-#: /docs 页面会继续加载子资源，需按前缀放行。
-WHITELIST_PREFIXES = ("/docs/",)
-
 
 def _is_whitelisted(path: str) -> bool:
-    return path in WHITELIST_EXACT or path.startswith(WHITELIST_PREFIXES)
+    return path in WHITELIST_EXACT
 
 
 def _requires_auth(path: str) -> bool:
@@ -68,6 +72,12 @@ def _requires_auth(path: str) -> bool:
 
 
 def _extract_token(request: Request) -> str:
+    """凭据来源：`Authorization` 头优先，无头则看 Cookie。
+
+    Cookie 那条**不是**额外发明的一条认证路径 —— 13 §6.1 逐字写「从请求头 / Cookie
+    提取会话凭据」。本阶段登录端点只把凭据放在响应体里（不下发 Cookie），
+    所以这条路径当前无人写入；它在这里是因为事实来源要求它对前端开放。
+    """
     header = request.headers.get(AUTH_HEADER, "")
     if header.startswith("Bearer "):
         return header[7:].strip()
@@ -77,19 +87,34 @@ def _extract_token(request: Request) -> str:
 
 
 def _unauthorized(message: str) -> JSONResponse:
-    """401 的**统一**外形。
+    """401 的**统一**外形 —— 与登录端点那份走同一段渲染（`errors.error_body`）。
 
     中间件在异常处理器**之外**（它包着整个应用），所以这里不能抛 `HTTPException`
-    —— 那会走 FastAPI 的处理器链，在中间件里抛出去只会变成 500。响应形状就地从
-    这份 dict 来，与登录端点的 401（`DomainError` → 处理器）保持同形。
+    —— 那会走 FastAPI 的处理器链，在中间件里抛出去只会变成 500。故这里自己构造
+    `Unauthenticated` 再渲染它：状态码与响应体都取自异常类，而不是在这里另写一遍。
     """
-    return JSONResponse(
-        status_code=401,
-        content={"error": "unauthenticated", "message": message},
-    )
+    exc = Unauthenticated(message)
+    return JSONResponse(status_code=exc.http_status, content=error_body(exc))
 
 
-def _load_active_account(request: Request, account_id: object):
+def _as_role(value: str) -> Role:
+    """凭据里的 `role` 取值 → `Role` 成员；取值不在枚举内 → `SessionInvalid`（401）。
+
+    **必须转成枚举，不能原样放字符串**：`permissions.check` / `check_config_scope`
+    有 `isinstance(role, Role)` 守卫（`str` 枚举的 `hash` 取成员名，裸字符串查表会
+    静默查不中并一律返回 False），原样传下去会让第 2 层在每个请求上抛 `TypeError`
+    —— 把一次 401 变成一次 500，方向还恰好是最不该出错的那个方向。
+
+    取值不合法也不是「权限不足」而是「这份凭据不该通行」：本系统只签发这四个角色
+    （13 §2.2），出现第五个只能是被改过或跨版本。
+    """
+    try:
+        return Role(value)
+    except ValueError as exc:
+        raise SessionInvalid("会话凭据的 role 取值不合法: %r" % (value,)) from exc
+
+
+def _load_active_account(request: Request, account_id: int):
     """回查账号当前状态（13 §8.3），不可用则抛 `Unauthenticated`。
 
     会话是短命的：取完即关。**不复用端点的会话** —— 中间件在路由之前运行，
@@ -97,10 +122,13 @@ def _load_active_account(request: Request, account_id: object):
     纠缠在一起，端点提交会带着中间件的读事务一起提交），要么再开一个（两倍的连接）。
     一行主键查询的成本远低于这两者。
 
+    工厂取自 `deps.session_factory(request)` 而不是直接读 `request.app.state`：
+    同一个属性的两种读法会漂移（`deps.py` 的模块 docstring 讲了为什么只有一个属性），
+    而这种漂移的表现是「路由读测试库、中间件读开发库」。
+
     返回的行在会话关闭后是 detach 状态，列已全部加载，供端点读用（`deps.current_account`）。
     """
-    factory = request.app.state.session_factory
-    with factory() as session:
+    with session_factory(request)() as session:
         return assert_account_usable(load_account(session, account_id))
 
 
@@ -113,6 +141,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         try:
             claims = decode_session_token(_extract_token(request))
+            role = _as_role(claims["role"])
             account = _load_active_account(request, claims["user_id"])
         except SessionInvalid as exc:
             return _unauthorized(str(exc))
@@ -123,7 +152,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
         request.state.account = account
         request.state.account_id = account.id
         # 来自凭据（13 §6.2），不是来自上面那行 —— 见模块 docstring。
-        request.state.role = claims["role"]
+        # 是 `Role` 成员而非裸字符串，与 `permissions.check` 的类型守卫配套（见 _as_role）。
+        request.state.role = role
         # spec `auth` 的「改密前不得访问其他业务端点」需要一个拦截点，本阶段**没有**实现它；
         # 标志先放这里，拦截与改密端点一起登记在 tasks.md 9.4g。
         request.state.must_change_password = not account.initial_password_changed

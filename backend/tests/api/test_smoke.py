@@ -152,8 +152,16 @@ def test_whitelist_exact_matches_doc_13() -> None:
 
 
 def test_whitelist_matching_rules() -> None:
-    """精确匹配 + `/docs/` 前缀放行；`/api/*` 其余路径不放行。"""
+    """**只有**精确匹配；`/api/*` 其余路径一律不放行。
+
+    曾经这里断言 `/docs/oauth2-redirect` 按 `/docs/` 前缀放行。那条前缀规则已删
+    （理由见 `middleware.WHITELIST_EXACT` 的注释：`/docs` 页面不请求任何本站子路径，
+    而白名单每多一条就多一个免认证入口）。13 §6.1 的清单是**四条**，
+    所以从「四条」这一侧测 —— 前缀放行是一种很难被注意到的扩大。
+    """
     assert _is_whitelisted("/health")
-    assert _is_whitelisted("/docs/oauth2-redirect")  # 子资源按前缀放行
+    assert _is_whitelisted("/docs")
+    assert not _is_whitelisted("/docs/oauth2-redirect")  # 不做前缀放行
     assert not _is_whitelisted("/api/health")
     assert not _is_whitelisted("/healthz")  # 不做模糊匹配
+    assert not _is_whitelisted("/api/auth/login/extra")  # 不做子路径放行

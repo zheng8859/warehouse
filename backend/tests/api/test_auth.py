@@ -36,6 +36,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from fastapi import Request
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
@@ -496,6 +497,74 @@ def test_middleware_accepts_the_cookie_too(api: Api) -> None:
     response = api.client.get("/api/health", cookies={COOKIE_NAME: token})
 
     assert response.status_code == 200
+
+
+# ------------------------------------- 7.6b 凭据内容不合法：一律 401，不得漏成 500
+
+def test_credential_with_an_unknown_role_is_rejected(api: Api) -> None:
+    """`role` 取值不在 `Role` 枚举内 → 401（`auth` spec：凭据问题一律 401）。
+
+    本系统只签发四个角色（13 §2.2），出现第五个只能是被改过或跨版本 ——
+    「签名有效」只说明内容没被第三方改过，不说明内容合法。
+
+    这条同时守住一件更隐蔽的事：中间件把 `role` **转成 `Role` 成员**才放进
+    `request.state`。若原样放字符串，第 2 层的 `isinstance(role, Role)` 守卫会抛
+    `TypeError`，于是每个带这种凭据的请求都变成 500 —— 方向恰好是最不该出错的那个。
+    """
+    account_id = api.create_account()
+    token = create_session_token(account_id, "ceo", "active")
+
+    response = api.client.get("/api/health", headers=api.auth(token))
+
+    assert response.status_code == 401
+
+
+#: 签名合法但 `user_id` 类型不对的载荷。`type: ignore` 是**刻意**的：正常路径造不出
+#: 这些值，本用例要的正是「一份本系统绝不会签发的凭据」（见 test_token.py 的同类用例）。
+_BAD_USER_IDS: tuple[object, ...] = ({}, [1, 2], "7", None, True)
+
+
+@pytest.mark.parametrize("user_id", _BAD_USER_IDS, ids=[repr(v) for v in _BAD_USER_IDS])
+def test_credential_with_a_malformed_user_id_is_rejected(api: Api, user_id: object) -> None:
+    """`user_id` 不是整数 → 401。
+
+    实测过这条路径的三种落点：`{}` / `[1, 2]` 让 `session.get(Account, …)` 抛
+    `InvalidRequestError`（500），`"7"` 能查到（SQLite 按等值比较），`True` 会命中
+    主键 1（bool 是 int 的子类）。所以「类型对不对」必须在校验层判掉，
+    而不是指望下游恰好看不出差别。
+    """
+    token = create_session_token(user_id, "warehouse_keeper", "active")  # type: ignore[arg-type]
+
+    assert api.client.get("/api/health", headers=api.auth(token)).status_code == 401
+
+
+def test_middleware_puts_a_role_member_on_the_request_state(api: Api) -> None:
+    """`request.state.role` 是 `Role` 成员，不是裸字符串。
+
+    `Role` / `AccountStatus` 是 `str` 枚举：`Role.ADMIN == "admin"` 为真，但
+    `Enum.__hash__` 取**成员名**，于是拿裸字符串去查 `ROLE_PERMISSIONS` 会**静默
+    查不中**并一律返回 False（现场表现：「管理员登录后菜单全空」而日志无错）。
+    `permissions.check` 为此加了 `isinstance(role, Role)` 守卫 —— 守卫要求传成员，
+    所以中间件放什么类型是有后果的：放字符串，每个请求都会在守卫那里抛 `TypeError`。
+
+    探针路由挂在本用例新建的应用实例上（`create_app()` 每个用例一次），
+    不会留在模块级 `app.routes` 里影响装配完整性断言。
+    """
+    api.create_account(role=Role.SUPERVISOR)
+
+    @api.client.app.get("/api/_probe/role-type")
+    def _probe(request: Request) -> dict:
+        role = request.state.role
+        return {
+            "is_member": isinstance(role, Role),
+            "type": type(role).__name__,
+            "value": getattr(role, "value", None),
+        }
+
+    response = api.client.get("/api/_probe/role-type", headers=api.auth(api.login_token()))
+
+    assert response.status_code == 200
+    assert response.json() == {"is_member": True, "type": "Role", "value": "supervisor"}
 
 
 # ------------------------------------------------------------------ 7.7 完成标准 #4 四场景
