@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -28,6 +29,7 @@ from app.api.routes import (
     snapshot,
 )
 from app.core.config import settings
+from app.core.db import SessionLocal
 from app.core.errors import DomainError
 
 logger = logging.getLogger(__name__)
@@ -57,6 +59,11 @@ def create_app() -> FastAPI:
         openapi_url="/openapi.json",
         redoc_url=None,
     )
+
+    # 会话工厂挂到 app 上：中间件（第 1 层）与端点依赖（`deps.get_db`）都读它，
+    # 于是测试里换库只需覆盖一处 —— 漏掉一处的后果是「端点读测试库、中间件读开发库」，
+    # 那会表现成一个难以理解的 401，而不是「有东西没配好」。见 app/api/deps.py。
+    app.state.session_factory = SessionLocal
 
     # 第 1 层：认证中间件（全局认证，v1 实现）。13 §六。
     app.add_middleware(AuthMiddleware)
@@ -96,14 +103,13 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(DomainError)
     async def _domain_error_handler(request: Request, exc: DomainError) -> JSONResponse:
-        return JSONResponse(
-            status_code=exc.http_status,
-            content={
-                "error": exc.code,
-                "message": exc.message,
-                "detail": exc.detail,
-            },
-        )
+        content: dict[str, Any] = {"error": exc.code, "message": exc.message}
+        # `detail` 为 None 时**不出现**这个键：401 有两处产生方（中间件与登录端点），
+        # 前端拦截器按 `error` 分流，两者的形状必须逐字一致 —— 否则它得写两个分支。
+        # 有 detail 的（409 状态冲突、403 权限拒绝）照旧带上。
+        if exc.detail is not None:
+            content["detail"] = exc.detail
+        return JSONResponse(status_code=exc.http_status, content=content)
 
 
 app = create_app()
