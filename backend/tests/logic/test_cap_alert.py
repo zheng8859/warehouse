@@ -10,10 +10,13 @@
 两个都空 = 无法定位的告警，两个都非空 = 不知道该以谁为准（D5）。三层 TDD 的分工里
 这类「口径判定」归逻辑层（00-总体开发方案 §3.1）。
 
-**一处本阶段无法完全验到的**：`ledger_txn_id` 此刻**没有外键**（`ledgers` 表属作业链 §4，
-见 `app/models/linkage.py` 模块 docstring 第 4 条）。§4 补上外键后，
-下文的「两个都非空」用例会先撞外键而不是 CHECK —— 届时该用例需要一个真实的台账行做夹具，
-断言也应从「抛 IntegrityError」收紧为「抛的是 CHECK 不是外键」。已登记在 tasks.md 9.4b。
+**§4 已补上 `ledger_txn_id` 的外键，本文件随之收紧**（§3 当时留的口子，见 tasks.md 9.4b）：
+`ledgers` 表属作业链，§3 落地 `CapAlert` 时它还不存在，故那一版先落整数列。§4 补上后
+
+  - 「只引用台账事务」的用例不再随手编一个 `ledger_txn_id=42`，而是**造一行真实台账**；
+  - 「两个都非空」的用例现在有两个约束会命中，断言收紧为「命中的是 CHECK 而不是外键」——
+    这条区分是有意义的：若它撞的是外键，说明「两个来源恰好一个」这条口径**已经被绕过**，
+    外键只是碰巧挡住了同一行数据。
 """
 from __future__ import annotations
 
@@ -25,8 +28,9 @@ from sqlalchemy.exc import IntegrityError, StatementError
 from sqlalchemy.orm import Session
 
 from app.core import enums as shared_enums
-from app.core.enums import ImportStatus
+from app.core.enums import ImportStatus, JobStatus, JobType, LedgerType
 from app.models.base import Base
+from app.models.job import JobOrder, Ledger
 from app.models.linkage import AlertKind, CapAlert, ImportSession, Snapshot
 
 pytestmark = pytest.mark.logic
@@ -57,6 +61,40 @@ def _snapshot(session: Session) -> Snapshot:
     session.add(snapshot)
     session.flush()
     return snapshot
+
+
+def _ledger(session: Session) -> Ledger:
+    """最小父链：作业单 → 台账。台账事务号就是 `Ledger.id`。
+
+    §3 的 `CapAlert.ledger_txn_id` 只是个整数；§4 之后它是真外键，指向的行必须存在。
+    """
+    job_order = JobOrder(
+        warehouse_id=WAREHOUSE,
+        order_no="3573743144K55G",
+        line_no="10",
+        job_type=JobType.INBOUND,
+        material_code="3001234",
+        qty=40,
+        status=JobStatus.EXECUTED,
+    )
+    session.add(job_order)
+    session.flush()
+
+    ledger = Ledger(
+        warehouse_id=WAREHOUSE,
+        job_order_id=job_order.id,
+        ledger_type=LedgerType.INBOUND,
+        order_no=job_order.order_no,
+        material_code=job_order.material_code,
+        batch_no="GJP2571221",
+        qty=job_order.qty,
+        operator_id=1,  # 占位整数：账号表属 §5，本列此刻无外键可指
+        target_location_code="010104",
+        executed_at=DATA_TIME,
+    )
+    session.add(ledger)
+    session.flush()
+    return ledger
 
 
 def _alert(session: Session, snapshot: Snapshot, **overrides) -> CapAlert:
@@ -148,16 +186,17 @@ def test_alert_with_snapshot_only_is_accepted(session: Session) -> None:
 
 def test_alert_with_ledger_txn_only_is_accepted(session: Session) -> None:
     """事务内增量失败引用台账事务号（16 §11.7：该笔事务整体回滚）。"""
+    ledger = _ledger(session)
     row = _alert(
         session,
         _snapshot(session),
         snapshot_id=None,
-        ledger_txn_id=42,
+        ledger_txn_id=ledger.id,
         alert_kind=AlertKind.INCREMENT_FAILED,
         detail="增量写入异常，台账与 cap 已整体回滚",
     )
     assert row.snapshot_id is None
-    assert row.ledger_txn_id == 42
+    assert row.ledger_txn_id == ledger.id
 
 
 def test_alert_rejected_when_both_sources_are_null(session: Session) -> None:
@@ -173,12 +212,29 @@ def test_alert_rejected_when_both_sources_are_null(session: Session) -> None:
 def test_alert_rejected_when_both_sources_are_present(session: Session) -> None:
     """两个都非空 → 拒绝：不知道以谁为准（快照是权威 vs 事务是过程，16 §6.4）。
 
-    ⚠️ §4 给 `ledger_txn_id` 补上外键后，这条用例需要先造一行真实台账，
-    否则撞到的是外键而非 CHECK（见模块 docstring 末尾）。
+    台账行是真的（`ledger_txn_id` 已是外键），所以这里**必须**命中的是那条 CHECK。
+    断言点名约束，是为了与「撞外键」区分开：撞外键说明这一行只是恰好指向了不存在的
+    台账，而「恰好一个来源」这条口径本身没被守住。
     """
     snapshot = _snapshot(session)
-    with pytest.raises(IntegrityError):
-        _raw_insert(session, snapshot_id=snapshot.id, ledger_txn_id=42)
+    ledger = _ledger(session)
+
+    with pytest.raises(IntegrityError) as excinfo:
+        _raw_insert(session, snapshot_id=snapshot.id, ledger_txn_id=ledger.id)
+
+    assert "alert_source_exactly_one" in str(excinfo.value)
+    session.rollback()
+
+
+def test_ledger_txn_id_is_now_a_real_foreign_key(session: Session) -> None:
+    """§4 补上的外键真的生效：指向不存在的台账被拒（`foreign_keys=ON`，D12）。
+
+    这条是 §3 欠下的账 —— 那一版 `ledger_txn_id` 只是个整数，随便填什么都写得进去。
+    """
+    with pytest.raises(IntegrityError) as excinfo:
+        _raw_insert(session, snapshot_id=None, ledger_txn_id=999_999)
+
+    assert "FOREIGN KEY" in str(excinfo.value).upper()
     session.rollback()
 
 
@@ -216,12 +272,13 @@ def test_alert_handled_defaults_to_false(session: Session) -> None:
     ).scalar_one() in (1, True)
 
 
-def test_ledger_txn_id_never_points_elsewhere() -> None:
-    """`ledger_txn_id` 本阶段无外键（D5 要求它是外键，目标表 `ledgers` 属 §4）。
+def test_ledger_txn_id_points_at_the_ledger_table() -> None:
+    """`ledger_txn_id` 的外键目标 = 台账（D5）。
 
-    这里不做「永远无外键」的断言 —— 那会在 §4 补外键时变成假失败。断言的是**方向**：
-    它要么还没建外键，要么指向 `ledgers.id`，绝不会指向别处。
+    §3 写这条用例时断言的是**方向**（「要么没建、要么指向 `ledgers.id`」），因为那一版
+    刻意还没建外键。§4 已补上，故收紧成等号 —— 从此这条断言不会因为「外键消失」
+    而静默通过。
     """
     column = Base.metadata.tables["cap_alerts"].c.ledger_txn_id
     targets = {fk.target_fullname for fk in column.foreign_keys}
-    assert targets <= {"ledgers.id"}, f"ledger_txn_id 指向了意外的表：{targets}"
+    assert targets == {"ledgers.id"}, f"ledger_txn_id 指向了意外的表：{targets}"

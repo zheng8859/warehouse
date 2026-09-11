@@ -36,12 +36,13 @@
    列为**校验规则**而非落库前置；巷道与库位本就由快照派生（16 A.4「巷道 = 库位号[:2]」）。
    建外键会形成「先有主数据、才有快照，而主数据又由快照派生」的循环依赖。
    唯一键落在业务列上，与 16 A.4 的「库存行标识 = 库位号 + 批号（+ 料号）」逐字一致。
-4. **`CapAlert.ledger_txn_id` 本阶段不建外键**（D5 要求它是外键，指向台账事务号）。
-   外键目标 `ledgers` 表属作业链（§4 / `models/job.py`），而 SQLAlchemy 的 `ForeignKey`
+4. **`CapAlert.ledger_txn_id` 的外键是分两步建的**（D5 要求它是外键，指向台账事务号）。
+   外键目标 `ledgers` 表属作业链（`models/job.py`），而 SQLAlchemy 的 `ForeignKey`
    目标表必须已在 `Base.metadata` 中 —— 否则 `create_all` 与迁移在编译 DDL 时就抛
-   `NoReferencedTableError`，本组测试与迁移全部跑不起来。故此处先落整数列，
-   **外键由 §4 的迁移用 `batch_alter_table` 补**（SQLite 改约束必须走 batch 重建）。
-   登记在 tasks.md 9.4b。
+   `NoReferencedTableError`，本组测试与迁移全部跑不起来。故 §3 先落整数列，**§4 落地
+   `ledgers` 后由迁移 `f01b0406d12c` 用 `batch_alter_table` 补上**（SQLite 改约束必须走
+   batch 重建）。此前 §3 欠的账由 `tests/logic/test_cap_alert.py` 收紧的用例看住
+   （断言从「方向」改成等号，并新增一条真外键的负例）；tasks.md 9.4b 已据此销账。
 5. **`InventoryItem.zone` / `production_date` 保留但可空**。17 §3.3 的字段表列了这两列，
    而 16 A.1 的 INV 模版已把它们移除（「库区号、生产日期不再需要」）。本表按 17 的字段清单
    保留列（17 是实体字段的单一事实来源），按 A.1 的实际可得性置为可空 —— 冲突登记在 9.4b。
@@ -317,13 +318,15 @@ class CapAlert(BaseEntity):
         sa.ForeignKey("snapshots.id"), nullable=True
     )
 
-    #: 来源之二：台账事务号。
-    #: ⚠️ **本阶段刻意不建外键**（D5 要求它是外键，指向台账 `ledgers.id`）：该表属作业链
-    #: §4，此刻不在 `Base.metadata` 里，声明 `ForeignKey` 会让 `create_all` 与迁移在编译
-    #: DDL 时抛 `NoReferencedTableError`。§4 落地 `ledgers` 后，用一份
-    #: `batch_alter_table("cap_alerts")` 的迁移补上（SQLite 改约束必须走 batch 重建）。
-    #: 已登记在 tasks.md 9.4b。
-    ledger_txn_id: Mapped[int | None] = mapped_column(nullable=True)
+    #: 来源之二：台账事务号（D5 要求它是外键）。
+    #: §3 落地本表时 `ledgers` 还不存在 —— SQLAlchemy 的 `ForeignKey` 目标表必须已在
+    #: `Base.metadata` 中，先声明会让 `create_all` 与迁移在编译 DDL 时抛
+    #: `NoReferencedTableError`（本表的测试与建表当时全跑不起来）。故 §3 先落整数列，
+    #: 这条外键由迁移 `f01b0406d12c`（作业链，与本节同名）用 `batch_alter_table` 补上
+    #: —— SQLite 改约束只能 batch 重建。
+    ledger_txn_id: Mapped[int | None] = mapped_column(
+        sa.ForeignKey("ledgers.id"), nullable=True
+    )
 
     #: 详情（异常明细：文件 + 列 + 行 + 原因，16 §3.2 的 FAILED 行）。必填 ——
     #: 告警的消费方是「能不能处置」，没有详情的告警处置不了。

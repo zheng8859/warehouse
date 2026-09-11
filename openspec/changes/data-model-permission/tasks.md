@@ -111,13 +111,50 @@
 
 ## 4. 作业链（`26` 附录A 的 D 组，5 实体）
 
-- [ ] 4.1 `JobOrder`（`job_type` 区分三类、`status` 限 7 值、`lock_version`、时间戳）；验证：`tests/models/test_job.py` 断言非法 `job_status` 被拒
-- [ ] 4.2 状态机迁移表与守卫（放 `app/core/state_machine.py`，纯函数无 IO）；验证：`tests/logic/test_job_state.py` 覆盖全部 10 条合法迁移通过 + 未列出迁移（如 `PENDING → EXECUTED`）被拒（spec `data-model`「JobOrder 状态机」）
-- [ ] 4.3 `RecommendationPlan`（`payload_json` 承载推荐理由 / 顺路取顺序 / 收拢方案，按 `job_type` 区分）；验证：断言 `degrade_reason` 可为空但 `degraded` 为真时必须非空
-- [ ] 4.4 `Ledger`（`ledger_type` 复用 `job_type` 取值域、唯一约束防重复写）；验证：断言同类同单第二条台账写入被拒
-- [ ] 4.5 `Verification`（`verify_result` 限 `PASS` / `DEVIATION`）；验证：断言非法取值被拒
-- [ ] 4.6 `Deviation`（`status` 与 `cause_kind` 为实体局部值域，不进 `enums.py`）；验证：断言两者不在共享枚举登记表中（spec `data-model`「枚举登记范围与取值」）
-- [ ] 4.7 为本组生成迁移；验证：`alembic upgrade head` 后 5 张表存在，`autogenerate` 空 diff
+- [x] 4.1 `JobOrder`（`job_type` 区分三类、`status` 限 7 值、`lock_version`、时间戳）；验证：`tests/models/test_job.py` 断言非法 `job_status` 被拒
+      （唯一约束 `(warehouse_id, job_type, order_no, line_no)` —— 行唯一键取 16 附录A 的「单据号码 + 行号」，
+      `job_type` 入键是因为三类作业各自编号：同一单号行号在两种作业下可以同时存在（用例
+      `test_same_order_line_allowed_across_job_types` 钉住，否则会误伤跨类型同号）。
+      `lock_version` 直接进 §1 的 `app/core/concurrency.py` 守卫，**且本表无业务版本列** ——
+      D1 的「版本语义三分」里 `JobOrder` 只有乐观锁，用例 `test_job_order_has_no_business_version_column` 反向看住。
+      17 §4.1 的字段表把推荐侧 / 后验侧 / 降级标记列在本表，但那是**聚合级枚举**（说明「这一单有方案、有后验」），
+      具体化在 §4.3 / §4.4 各自的表里 —— 只有执行侧（`actual_location_code` / `actual_qty` / `executed_at` /
+      `disposition` / 确认卡三列）留在本表，使 15 §7.3 的追溯链只有一个来源。`confirmed_by_id` 无外键，见 9.4d①）
+- [x] 4.2 状态机迁移表与守卫（放 `app/core/state_machine.py`，纯函数无 IO）；验证：`tests/logic/test_job_state.py` 覆盖全部 10 条合法迁移通过 + 未列出迁移（如 `PENDING → EXECUTED`）被拒（spec `data-model`「JobOrder 状态机」）
+      （10 条合法迁移逐条抄 15 §3.1；用例用 `itertools.product` 穷举 7×7 = 49 对，断言「合法者恰 10 对、
+      其余 39 对全拒」—— 用一个常数把「未列出的迁移一律拒绝」钉死，而不是只抽查几条。
+      `PENDING → PENDING` 是唯一合法自环（重复下单 / 同单再提交），两个终态 `CANCELLED` / `VERIFIED` 无出边。
+      `CONFIRMED → PLANNED` 是合法回边（退回重选），而 `EXECUTED → PLANNED` **不是** —— 台账已写，回退会破坏
+      「台账是 cap 增量唯一来源」。守卫对非 `JobStatus` 入参抛 `TypeError` 而非 `StateConflict`：`str` 枚举
+      `JobStatus.PENDING == "PENDING"` 为真但哈希按成员名走，放行裸字符串会让同一份代码在改过取值后就静默变脸。
+      模块纯净性由 AST 白名单用例看住（只许 `enum` / `typing` / `collections.abc` 等 + 自有 `core/enums`、`core/errors`））
+- [x] 4.3 `RecommendationPlan`（`payload_json` 承载推荐理由 / 顺路取顺序 / 收拢方案，按 `job_type` 区分）；验证：断言 `degrade_reason` 可为空但 `degraded` 为真时必须非空
+      （`plan_kind` 是实体局部值域（`分配`/`顺路取`/`收拢`），取值即 15 §3 的三类方案名 —— 不进 `enums.py`（D2）。
+      `job_order_id` **非唯一** + 显式 `ix_recommendation_plans_job_order_id`：一单可被重规划，
+      用例 `test_a_job_order_may_be_replanned` 钉住（对比 `Ledger` 的唯一约束，两张表的差异是刻意的）。
+      `degraded` / `degrade_reason` 的 CHECK 在三条链上同名同形（`ck_*_degrade_reason_required`），
+      降级必须在理由里写明 `degrade_reason`（CLAUDE.md 红线「降级不静默」）））
+- [x] 4.4 `Ledger`（`ledger_type` 复用 `job_type` 取值域、唯一约束防重复写）；验证：断言同类同单第二条台账写入被拒
+      （唯一约束落在 `job_order_id` 上，**不是**（类型 + 单号）：16 附录A 的行唯一键含行号，而 15 附录A 三类台账的
+      字段表都没有行号 —— 按「类型 + 单号」会退化成「一张多行单据只能写一行」。`ledger_type` 与 `job_type`
+      取值同域但独立登记（两个枚举名，D2 的 11 个里各占一个）。库位三选一的 CHECK 按类型分派：
+      入库源空目标非空、出库源非空目标空、移库两者都非空（与 `source/target` 各自 6 位文本的 CHECK 叠加）。
+      `operator_id` 必填无外键（账号表属 §5，见 9.4d①）；本表**没有 `updated_at`** —— 台账是冻结记录，
+      写入即固化。§4 同时补上了 §3 欠的账：`CapAlert.ledger_txn_id` 的真外键，并收紧了对应用例）
+- [x] 4.5 `Verification`（`verify_result` 限 `PASS` / `DEVIATION`）；验证：断言非法取值被拒
+      （唯一约束 `(job_order_id, metric_kind)` —— 一单每指标一行。`metric_kind` 是 `String(32)` **无枚举**：
+      17 §4.4 只列字段名、未给取值域（指标名在 18 号），本阶段不编造，登记在 9.4d②。
+      实际值 / 阈值用 `Float` 而非整型 —— 阈值可能是比例或小数（用例 `test_actual_value_is_a_float`））
+- [x] 4.6 `Deviation`（`status` 与 `cause_kind` 为实体局部值域，不进 `enums.py`）；验证：断言两者不在共享枚举登记表中（spec `data-model`「枚举登记范围与取值」）
+      （两条结构类 CHECK：`batch_no` 与 `material_code` **至少一个非空** —— 两个都空则偏离记录无从定位；
+      `status = 已发起移库` 时 `relocate_job_order_id` 必填 —— 状态说已发起却没有单号，追不下去。
+      `cause_kind` 取值照 17 §4.5 原文（`新入库收拢不达标` / `历史库存拖累`））
+- [x] 4.7 为本组生成迁移；验证：`alembic upgrade head` 后 5 张表存在，`autogenerate` 空 diff
+      （迁移 `f01b0406d12c`，`autogenerate` 生成；唯一手改是把 CHECK 文本里一处 f-string 造成的双空格归一
+      —— CHECK 文本不在 autogenerate 的比对范围内，模型与迁移必须手工保持一致，已逐条比对过。
+      补 `cap_alerts` 外键用的是 `batch_alter_table`（SQLite 只能 batch 重建），故**实测**了重建前后的
+      `sqlite_master.sql` 指纹：`cap_alerts` 原有 3 条 CHECK 一条不少、新增 1 条外键。
+      `alembic check` 报「No new upgrade operations detected」）
 
 ## 5. 度量与身份（`26` 附录A 的 E + F 组，2 实体）
 
@@ -167,9 +204,25 @@
       ④ `Aisle.total_cells` 在巷道主数据到位前的**近似值不标注来源** —— `16` §6.1 要求「在推荐理由中标注'容量基于快照近似'」，但 `Aisle` 表没有承载该标注的列，阶段四实现 cap 计算时需决定标注落在哪（该列？`AisleCap`？还是理由 JSON）
 - [ ] 9.4c **§3 暴露的口径待确认项**（同样只记录、不擅自补设计）：
       ① `InventoryItem.zone` / `production_date` 的**文档冲突** —— `17` §3.3 列了这两列，而 `16` A.1 的 INV 模版已移除它们（原文「缺号为模版中已移除的字段（库区号、生产日期不再需要）」）。本阶段按 17 保留列、按 A.1 置可空。若确认不再需要应改 `17` 后删列；若仍需要 `zone`，须定其来源 —— `14` §3.4 把「库区」列为**可行巷道集**的匹配条件之一，长期为空会让该条件静默失效；
-      ② `CapAlert.ledger_txn_id` 的**外键待 §4 补** —— 本阶段无外键（目标表 `ledgers` 属作业链）。§4 落地 `ledgers` 后须用 `op.batch_alter_table("cap_alerts")` 加外键（SQLite 改约束只能 batch 重建），并同步收紧 `tests/logic/test_cap_alert.py` 中「两个都非空」用例（届时先撞外键而非 CHECK，断言应从「抛 IntegrityError」改为「抛的是 CHECK 不是外键」）；
+      ② ~~`CapAlert.ledger_txn_id` 的**外键待 §4 补**~~ —— **§4 已销账**：迁移 `f01b0406d12c` 用 `op.batch_alter_table("cap_alerts")` 补上外键（SQLite 改约束只能 batch 重建），`tests/logic/test_cap_alert.py` 随之收紧三条：「只引用台账事务」不再随手编 `ledger_txn_id=42` 而造一行真台账、「两个都非空」断言改为点名 CHECK（`alert_source_exactly_one`，与「撞外键」区分开 —— 撞外键说明口径已被绕开）、新增真外键的负例，「指向 `ledgers.id`」的断言从方向收紧成等号；
       ③ `ImportSession` 的「业务版本」口径 —— spec 要求它与乐观锁分列，而 `17` §3.1 没有给 `ImportSession` 的 `version_no`；本实现取 `16` §3.3「分流去向：快照 → cap 基线版本号」落为 `snapshot_version_no`。若评审认为该值只应活在 `receipt_json` 里（D4），删列即可 —— 但那样 spec 的这条场景要一并改；
       ④ `ImportSession.session_no` 与 `import_batch_no` 是否同值 —— `17` §3.1 与 `16` §3.3 都并列列了「导入会话 ID」与「批次号」，未说差异；本阶段按「会话可重试（`FAILED → DRAFT`）→ 一批次一会话、可多对一」处置（故批次号不唯一）。若确认一会话一批次，应加唯一约束；
       ⑤ `InventoryItem` 是否要为 16 A.4 的**解析时派生字段**（巷道、占用格数）落列 —— 该表只给了派生逻辑与时机，没给存储口径，`17` §3.3 的字段表也没有。本阶段不落列：占用格数的「板-格」换算规则属 `CapacityConfig`（任务 §6，实体尚未建模），口径未定前连列类型都只能猜。阶段四按实际查询计划定（cap 聚合、同物料跨巷道 是否需要列级索引）；
       ⑥ `ImportSession.files_json` 超出 D4 的 JSON 映射表 —— D4 只映射 `17` §10 的 6 类结构，而 `17` §3.1 / `16` §3.3 要求三类文件清单（含**校验和**，是 16 §11.5 判重的依据）在库。本阶段按实体章节落列，若评审要求严格对齐 D4，需补 D4 或改述
+- [ ] 9.4d **§4 暴露的口径待确认项**（同样只记录、不擅自补设计）：
+      ① `job_orders.confirmed_by_id` 与 `ledgers.operator_id` 的**外键待 §5 补** —— 两列都指向账号表，
+      而 `Account` 属度量与身份链（§5）。本阶段按「必填 / 可空按 15 附录A 的字段表、**不建外键**」落列，
+      与 9.4c② 同一处置（目标表不在 `Base.metadata` 里，声明即抛 `NoReferencedTableError`）。
+      §5 落地 `accounts` 后须用 `op.batch_alter_table` 补两条外键，并在 `tests/models/test_job.py` 里
+      同步加「指向不存在的账号被拒」的负例。**注意顺序**：这两条外键要等 `Account` 建表之后，
+      且 `ledgers.operator_id` 是 NOT NULL —— 补外键前须确认开发库里没有指向不存在账号的历史行；
+      ② `verifications.metric_kind` 的**取值域未定** —— 17 §4.4 只列字段名（`metric_kind` / 实际值 / 阈值 /
+      判定结果），未给取值清单，指标定义在 `18` 号。本阶段按 `String(32)` + 无 CHECK 落列，
+      **不编造指标名**。待 18 号确认后：若取值封闭，应改 `enum_column`（届时 CHECK 变化不会产生
+      autogenerate diff，须手工写迁移 —— 见 D8 的代价说明）；若指标可扩展，则保持文本并列进
+      `FieldMappingConfig` 一类配置；
+      ③ `JobOrder.disposition`（确认卡三列）与 `RecommendationPlan` 的关系 —— 17 §4.1 把「确认 / 调整 /
+      拒绝」列在 `JobOrder` 上，15 §7.2 的二次确认卡又同时回填方案调整明细。本阶段按「处置结果记账在
+      `JobOrder`（单据当前态）、方案原文留在 `RecommendationPlan.payload_json`（不可变方案）」处置，
+      两者的先后与覆盖关系文档未明说。若评审认为调整后的方案也要留痕，需在 §4.3 侧增列而非改本表
 - [ ] 9.5 收尾：分支 `phase-2/data-model-permission` 以 `--no-ff` 合并 `main` 并打 `v0.2.0`；验证：`git tag | grep v0.2.0` 命中，且工作区干净
