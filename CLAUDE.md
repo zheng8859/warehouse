@@ -292,18 +292,38 @@ Go/No-Go 闸门：集中度达成率 ≥70% 且趋势向好 + 护栏全过 → G
 
 ## 十一、当前状态与待办（阶段一）
 
+**阶段一已收尾，`v0.1.0` 已打标。**
+
 **已完成**：`openspec/` 已初始化且 `config.yaml` 已填 · `backend/` 骨架 · 本文件 · `CONTEXT.md` ·
 `git init`（`main` 分支，origin = 本地裸仓库 `D:\成品库位智能推荐\warehouse-origin.git`）·
 no-mistakes 已 `init`（二进制本机已存在，见第十二节）·
 新增 `env` scope（`00` §4.2 正本 + 校验脚本同步，见第六节）·
-graphify 已验证端到端可用（见第十三节）
+graphify 已验证端到端可用（见第十三节）·
+首次提交 `6fdc73c` + `git tag -a v0.1.0` ·
+venv（`backend/.venv`）已建、`requirements.txt` 已装 ·
+**pre-commit 三类钩子已装并实测通过** ·
+`backend/tests/api/test_smoke.py`：9 条装配冒烟测试（装配完整性 / 认证中间件 / 白名单）
 
-**未完成**（阶段一收尾）：
+**未完成**（均为阶段二起）：
 
-1. **首次提交 + `git tag -a v0.1.0`** —— 仓库当前 **0 提交**；scope 问题已解决（`env`），可直接提交
-2. 创建 venv 并安装 `backend/requirements.txt`
-3. 装 pre-commit 钩子：`pre-commit install --hook-type pre-commit --hook-type commit-msg --hook-type pre-push`
-4. `backend/scripts/init_db.py` 待阶段二随模型实现
+- `backend/scripts/init_db.py`、`seed_dev.py` —— 阶段二随模型实现
+- `backend/evals/run_evals.py` —— 阶段六实现；现在跑刻意以退出码 3 失败
+
+### pre-commit 钩子：装之前先读这条
+
+钩子**必须**这样装（在 `backend/` 下执行）：
+
+```bash
+PYTHONUTF8=1 pre-commit install --hook-type pre-commit --hook-type commit-msg --hook-type pre-push
+```
+
+**漏掉 `PYTHONUTF8=1` 会让之后每一次提交都失败**，且报错是误导性的
+「pre-commit not found. Did you forget to activate your virtualenv?」。
+
+原因：本仓库路径含非 ASCII（`成品库位智能推荐`），而 pre-commit 以 locale 编码
+（本机 cp936）写钩子脚本，Git 的 sh 却按 UTF-8 解释 → 脚本内那条绝对路径解析不出来。
+`PYTHONUTF8=1` 让 Python 以 UTF-8 写脚本，从源头消除错配。
+**完整成因与另一处 entry 路径 bug 见 `backend/.pre-commit-config.yaml` 头部注释。**
 
 **已知待确认项**（见交付说明，不要擅自"修正"）：
 
