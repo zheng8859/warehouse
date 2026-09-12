@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>① 登录页 · 成品库位智能推荐</title>
+<link rel="stylesheet" href="assets/styles.css">
+</head>
+<body data-page="p1">
+
+<header>
+  <div class="logo">库</div>
+  <h1>成品库位智能推荐</h1>
+  <div class="meta">
+    <span>工厂：<b>GTJ10036</b></span>
+    <span>版本：<b>PRD v0.16</b></span>
+  </div>
+</header>
+
+<div class="wrap">
+  <nav>
+    <div class="nt">8 个页面</div>
+    <a href="login.html" data-tab="p1"><span class="num">1</span>登录页</a>
+    <a href="data-import.html" data-tab="p2"><span class="num">2</span>数据导入页</a>
+    <div class="grp">— 三类作业 —</div>
+    <a href="inbound.html" data-tab="p3"><span class="op-ic" style="background:var(--green)">入</span>入库作业</a>
+    <a href="outbound.html" data-tab="p4"><span class="op-ic" style="background:var(--blue)">出</span>出库作业</a>
+    <a href="transfer.html" data-tab="p5"><span class="op-ic" style="background:var(--amber)">移</span>移库作业</a>
+    <div class="grp">— 看板与配置 —</div>
+    <a href="kpi-dashboard.html" data-tab="p6"><span class="num">6</span>集中度 KPI 看板</a>
+    <a href="config.html" data-tab="p7"><span class="num">7</span>配置页</a>
+    <a href="chat.html" data-tab="p8"><span class="num">8</span>对话式操作台</a>
+  </nav>
+
+  <main>
+    <div class="sec-head"><h2>① 登录页</h2><span class="sec-tag">未登录引导至此</span></div>
+    <p class="sec-sub">未登录访问任何页面均引导至登录页。本地基础账号 + 会话登录，企业 SSO / RBAC 为路线图（见 13 号）。</p>
+
+    <div class="login-wrap">
+      <div class="login-card">
+        <h2>成品库位智能推荐</h2>
+        <div class="sub-title">Warehouse Clarity · 仓廪清明</div>
+        <div class="login-err" id="loginErr">账号或密码错误，请重试</div>
+        <div class="field">
+          <label>用户名</label>
+          <input id="loginUser" placeholder="请输入用户名" autocomplete="off">
+        </div>
+        <div class="field">
+          <label>密码</label>
+          <div class="pwd-wrap">
+            <input id="loginPwd" type="password" placeholder="请输入密码">
+            <span class="pwd-toggle" id="pwdToggle" title="显示/隐藏密码">👁</span>
+          </div>
+        </div>
+        <button class="btn" id="loginBtn">登录</button>
+        <div class="sec-foot">首期为本地基础账号 + 会话登录<br>企业 SSO / RBAC 为路线图</div>
+      </div>
+    </div>
+
+    <div class="foot">① 登录页 · 按 21/22/24 号文档生成</div>
+  </main>
+</div>
+
+<script src="assets/app.js"></script>
+</body>
+</html>

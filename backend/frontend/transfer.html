@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>⑤ 移库作业 · 成品库位智能推荐</title>
+<link rel="stylesheet" href="assets/styles.css">
+</head>
+<body data-page="p5">
+
+<header>
+  <div class="logo">库</div>
+  <h1>成品库位智能推荐</h1>
+  <div class="meta">
+    <span>工厂：<b>GTJ10036</b></span>
+    <span>版本：<b>PRD v0.16</b></span>
+  </div>
+</header>
+
+<div class="wrap">
+  <nav>
+    <div class="nt">8 个页面</div>
+    <a href="login.html" data-tab="p1"><span class="num">1</span>登录页</a>
+    <a href="data-import.html" data-tab="p2"><span class="num">2</span>数据导入页</a>
+    <div class="grp">— 三类作业 —</div>
+    <a href="inbound.html" data-tab="p3"><span class="op-ic" style="background:var(--green)">入</span>入库作业</a>
+    <a href="outbound.html" data-tab="p4"><span class="op-ic" style="background:var(--blue)">出</span>出库作业</a>
+    <a href="transfer.html" data-tab="p5"><span class="op-ic" style="background:var(--amber)">移</span>移库作业</a>
+    <div class="grp">— 看板与配置 —</div>
+    <a href="kpi-dashboard.html" data-tab="p6"><span class="num">6</span>集中度 KPI 看板</a>
+    <a href="config.html" data-tab="p7"><span class="num">7</span>配置页</a>
+    <a href="chat.html" data-tab="p8"><span class="num">8</span>对话式操作台</a>
+  </nav>
+
+  <main>
+    <div class="sec-head"><h2>⑤ 移库作业（偏离补救）</h2><span class="sec-tag">主管 / 仓管员 / 管理员</span></div>
+    <p class="sec-sub">筛选 → 勾选多个偏离批次 → 批量生成收拢方案并执行移库。任务来自 KPI 看板"同物料跨巷道数超标"批次（见 14 号移库降级链 + 15 号移库管线）。</p>
+
+    <div class="op-banner">
+      <span class="tag">移库</span>
+      <b>偏离批次 → 收拢补救；移库须过 cap / 批号一致性 / 集中度校验</b>
+      <div class="sub">移库不改批号，只调整所在巷道以收拢集中度；来自 KPI 看板"一键发起移库"的批次自动带入本页队列</div>
+    </div>
+
+    <div class="filterbar wide">
+      <input class="f-inp" placeholder="搜索物料 / 批次号">
+      <select class="f-sel"><option>ABC 全部</option><option>A 类</option><option>B 类</option><option>C 类</option></select>
+      <select class="f-sel"><option>状态 全部</option><option>待确认</option><option>已执行</option><option>已驳回</option></select>
+      <select class="f-sel"><option>物料 全部</option><option>PET500</option><option>PET600</option><option>辅材</option></select>
+      <select class="f-sel"><option>当前跨巷道 全部</option><option>≥3</option><option>≥5</option><option>≥7</option></select>
+      <select class="f-sel"><option>排序·偏离度</option><option>当前跨巷道 ↓</option><option>ABC 优先</option></select>
+      <button class="btn ghost" style="height:30px;padding:0 12px;">重置</button>
+    </div>
+
+    <div class="batchbar">
+      <label class="ck"><input type="checkbox" checked> 全选（筛选结果）</label>
+      <span class="qcount2">已选 <b>2</b> / 筛选 <b>2</b> 单</span>
+      <span class="sp"></span>
+      <button class="btn soft">批量生成方案</button>
+      <button class="btn warn">批量确认执行 ▶</button>
+      <button class="btn ghost">导出清单</button>
+    </div>
+
+    <div class="wb-batch">
+      <div class="col">
+        <div class="ct"><span>偏离批次队列（多选）</span><span class="pill">2 单</span></div>
+        <div class="ord ck sel"><label class="ckb"><input type="checkbox" checked></label>
+          <div class="od"><div class="onum">GJP2571305</div><div class="mc">MAT-60001</div>
+            <div class="t">PET600 矿泉水</div>
+            <div class="m"><span>40 板</span><span>当前跨巷道 <b style="color:var(--red)">7</b></span></div>
+            <div class="st"><span class="pill warn">待确认</span></div></div></div>
+        <div class="ord ck sel"><label class="ckb"><input type="checkbox" checked></label>
+          <div class="od"><div class="onum">GJP2570888</div><div class="mc">MAT-90001</div>
+            <div class="t">包装辅材</div>
+            <div class="m"><span>30 板</span><span>当前跨巷道 <b style="color:var(--amber)">3</b></span></div>
+            <div class="st"><span class="pill warn">待确认</span></div></div></div>
+      </div>
+      <div class="col">
+        <div class="ct"><span>批量移库方案（已选 2 单）</span><span class="pill ok">全部达标</span></div>
+        <table class="btab">
+          <tr>
+            <th>批次</th><th>物料编码</th><th>物料</th>
+            <th>当前跨巷道</th><th>建议收拢到</th><th>影响后跨巷道</th><th>操作</th>
+          </tr>
+          <tr>
+            <td><b>GJP2571305</b></td><td>MAT-60001</td><td>矿泉水</td>
+            <td><b style="color:var(--red)">7</b></td>
+            <td><span class="pill ok">巷道 05</span></td>
+            <td style="color:var(--green)"><b>1 ↓</b></td>
+            <td><span class="mini">接受</span><span class="mini ghost">微调</span><span class="mini soft">驳回</span></td>
+          </tr>
+          <tr>
+            <td><b>GJP2570888</b></td><td>MAT-90001</td><td>包装辅材</td>
+            <td><b style="color:var(--amber)">3</b></td>
+            <td><span class="pill ok">巷道 12</span></td>
+            <td style="color:var(--green)"><b>1 ↓</b></td>
+            <td><span class="mini">接受</span><span class="mini ghost">微调</span><span class="mini soft">驳回</span></td>
+          </tr>
+        </table>
+        <div class="note">逐单"微调"可改目标巷道（须经 cap 余量 / 批号一致性 / 集中度规则校验）；"驳回"移出本次批量；默认沿用系统建议即"接受"。校验失败红提示，不执行。</div>
+        <div class="batchfoot">
+          <span>平均收拢 <b>5.0 → 1.0</b></span>
+          <span>达标率 <b style="color:var(--green)">100%</b></span>
+          <span class="pill ok">全部达标 ✓</span>
+          <button class="btn warn">批量执行移库（写【移库台账】）</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="postbar">
+      <span>后验：本次批量移库</span>
+      <span class="big" style="color:var(--green)">5</span>
+      <span>跨巷道下降</span>
+      <span class="pill ok">达标 ✓</span>
+      <span style="color:var(--muted);font-size:12px;">已写入【移库台账】· 批次 <b style="color:var(--ink)">GJP2571305 / GJP2570888</b>（矿泉水 / 包装辅材）</span>
+    </div>
+
+    <div class="foot">⑤ 移库作业 · 按 21/22/24 号文档生成</div>
+  </main>
+</div>
+
+<a href="chat.html" class="dock" title="对话式操作台常驻浮窗">💬</a>
+<script src="assets/app.js"></script>
+</body>
+</html>

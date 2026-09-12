@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>④ 出库作业 · 成品库位智能推荐</title>
+<link rel="stylesheet" href="assets/styles.css">
+</head>
+<body data-page="p4">
+
+<header>
+  <div class="logo">库</div>
+  <h1>成品库位智能推荐</h1>
+  <div class="meta">
+    <span>工厂：<b>GTJ10036</b></span>
+    <span>版本：<b>PRD v0.16</b></span>
+  </div>
+</header>
+
+<div class="wrap">
+  <nav>
+    <div class="nt">8 个页面</div>
+    <a href="login.html" data-tab="p1"><span class="num">1</span>登录页</a>
+    <a href="data-import.html" data-tab="p2"><span class="num">2</span>数据导入页</a>
+    <div class="grp">— 三类作业 —</div>
+    <a href="inbound.html" data-tab="p3"><span class="op-ic" style="background:var(--green)">入</span>入库作业</a>
+    <a href="outbound.html" data-tab="p4"><span class="op-ic" style="background:var(--blue)">出</span>出库作业</a>
+    <a href="transfer.html" data-tab="p5"><span class="op-ic" style="background:var(--amber)">移</span>移库作业</a>
+    <div class="grp">— 看板与配置 —</div>
+    <a href="kpi-dashboard.html" data-tab="p6"><span class="num">6</span>集中度 KPI 看板</a>
+    <a href="config.html" data-tab="p7"><span class="num">7</span>配置页</a>
+    <a href="chat.html" data-tab="p8"><span class="num">8</span>对话式操作台</a>
+  </nav>
+
+  <main>
+    <div class="sec-head"><h2>④ 出库作业（交货单拣配）</h2><span class="sec-tag">仓储拣货员 / 主管</span></div>
+    <p class="sec-sub">筛选 → 勾选多张交货单(DO) → 批量生成顺路取并确认出库。每张拣配单对应一张交货单。出库为<b>只读派生</b>，不建基线、不改落位、仅扣减（见 14 号出库只读派生）。</p>
+
+    <div class="op-banner">
+      <span class="tag">出库</span>
+      <b>交货单 → 驱动出库作业；出库为只读派生，不建基线</b>
+      <div class="sub">本页不展示 PO（出货单与 PO 无对应）；微调仅调顺路取巷道序，须满足加权集中度 80%≤N（N=5 可配）</div>
+    </div>
+
+    <div class="filterbar wide">
+      <input class="f-inp" placeholder="搜索物料 / DO号">
+      <select class="f-sel"><option>ABC 全部</option><option>A 类</option><option>B 类</option><option>C 类</option></select>
+      <select class="f-sel"><option>状态 全部</option><option>待拣配</option><option>已出库</option><option>已驳回</option></select>
+      <select class="f-sel"><option>物料 全部</option><option>PET500</option><option>PET600</option><option>辅材</option></select>
+      <select class="f-sel"><option>出库量 全部</option><option>≤150</option><option>151-500</option><option>≥501</option></select>
+      <select class="f-sel"><option>排序·导入序</option><option>出库量 ↓</option><option>ABC 优先</option></select>
+      <button class="btn ghost" style="height:30px;padding:0 12px;">重置</button>
+    </div>
+
+    <div class="batchbar">
+      <label class="ck"><input type="checkbox" checked> 全选（筛选结果）</label>
+      <span class="qcount2">已选 <b>3</b> / 筛选 <b>3</b> 单</span>
+      <span class="sp"></span>
+      <button class="btn soft">批量生成顺路取</button>
+      <button class="btn warn">批量确认出库 ▶</button>
+      <button class="btn ghost">导出清单</button>
+    </div>
+
+    <div class="wb-batch">
+      <div class="col">
+        <div class="ct"><span>交货单(DO) 拣配队列（多选）</span><span class="pill">3 单</span></div>
+        <div class="ord ck sel"><label class="ckb"><input type="checkbox" checked></label>
+          <div class="od"><div class="onum">DO-88</div><div class="mc">MAT-50001</div>
+            <div class="t">PET500 茉莉柚茶</div>
+            <div class="m"><span>600 箱</span><span><b style="color:var(--amber)">A</b></span></div>
+            <div class="st"><span class="pill">待拣配</span></div></div></div>
+        <div class="ord ck sel"><label class="ckb"><input type="checkbox" checked></label>
+          <div class="od"><div class="onum">DO-91</div><div class="mc">MAT-60001</div>
+            <div class="t">PET600 矿泉水</div>
+            <div class="m"><span>400 箱</span><span><b style="color:var(--amber)">A</b></span></div>
+            <div class="st"><span class="pill">待拣配</span></div></div></div>
+        <div class="ord ck sel"><label class="ckb"><input type="checkbox" checked></label>
+          <div class="od"><div class="onum">DO-95</div><div class="mc">MAT-90001</div>
+            <div class="t">包装辅材</div>
+            <div class="m"><span>120 箱</span><span><b style="color:var(--muted)">C</b></span></div>
+            <div class="st"><span class="pill">待拣配</span></div></div></div>
+      </div>
+      <div class="col">
+        <div class="ct"><span>批量拣配方案（已选 3 单）</span><span class="pill ok">集中度达标</span></div>
+        <table class="btab">
+          <tr>
+            <th>出库单号</th><th>物料编码</th><th>物料</th><th>ABC</th>
+            <th>出库量</th><th>顺路取巷道序</th><th>加权集中度(80%≤N)</th><th>操作</th>
+          </tr>
+          <tr>
+            <td><b>DO-88</b></td><td>MAT-50001</td><td>茉莉柚茶</td><td>A</td><td>600</td>
+            <td><span class="pill ok">01 → 05 → 21</span></td><td>3</td>
+            <td><span class="mini">接受</span><span class="mini ghost">微调</span><span class="mini soft">驳回</span></td>
+          </tr>
+          <tr>
+            <td><b>DO-91</b></td><td>MAT-60001</td><td>矿泉水</td><td>A</td><td>400</td>
+            <td><span class="pill ok">03 → 07</span></td><td>2</td>
+            <td><span class="mini">接受</span><span class="mini ghost">微调</span><span class="mini soft">驳回</span></td>
+          </tr>
+          <tr>
+            <td><b>DO-95</b></td><td>MAT-90001</td><td>包装辅材</td><td>C</td><td>120</td>
+            <td><span class="pill ok">12</span></td><td>1</td>
+            <td><span class="mini">接受</span><span class="mini ghost">微调</span><span class="mini soft">驳回</span></td>
+          </tr>
+        </table>
+        <div class="note">逐单"微调"可调整顺路取巷道序（仍须满足加权集中度 80%≤N，默认 N=5，可配）；超限拦截，不写落位、不修改库存，仅扣减。</div>
+        <div class="batchfoot">
+          <span>预测平均加权集中度 <b>2.0</b></span>
+          <span>达标率 <b style="color:var(--green)">100%</b></span>
+          <span class="pill ok">全部达标 ✓</span>
+          <button class="btn warn">批量确认出库（写【出库台账】）</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="postbar">
+      <span>后验：本次批量出库</span>
+      <span class="big" style="color:var(--green)">3</span>
+      <span>张交货单</span>
+      <span class="pill ok">达标 ✓</span>
+      <span style="color:var(--muted);font-size:12px;">已写入【出库台账】· DO <b style="color:var(--ink)">88 / 91 / 95</b>（茉莉柚茶 / 矿泉水 / 包装辅材）</span>
+    </div>
+
+    <div class="foot">④ 出库作业 · 按 21/22/24 号文档生成</div>
+  </main>
+</div>
+
+<a href="chat.html" class="dock" title="对话式操作台常驻浮窗">💬</a>
+<script src="assets/app.js"></script>
+</body>
+</html>

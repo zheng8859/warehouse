@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>⑥ 集中度 KPI 看板 · 成品库位智能推荐</title>
+<link rel="stylesheet" href="assets/styles.css">
+</head>
+<body data-page="p6">
+
+<header>
+  <div class="logo">库</div>
+  <h1>成品库位智能推荐</h1>
+  <div class="meta">
+    <span>工厂：<b>GTJ10036</b></span>
+    <span>版本：<b>PRD v0.16</b></span>
+  </div>
+</header>
+
+<div class="wrap">
+  <nav>
+    <div class="nt">8 个页面</div>
+    <a href="login.html" data-tab="p1"><span class="num">1</span>登录页</a>
+    <a href="data-import.html" data-tab="p2"><span class="num">2</span>数据导入页</a>
+    <div class="grp">— 三类作业 —</div>
+    <a href="inbound.html" data-tab="p3"><span class="op-ic" style="background:var(--green)">入</span>入库作业</a>
+    <a href="outbound.html" data-tab="p4"><span class="op-ic" style="background:var(--blue)">出</span>出库作业</a>
+    <a href="transfer.html" data-tab="p5"><span class="op-ic" style="background:var(--amber)">移</span>移库作业</a>
+    <div class="grp">— 看板与配置 —</div>
+    <a href="kpi-dashboard.html" data-tab="p6"><span class="num">6</span>集中度 KPI 看板</a>
+    <a href="config.html" data-tab="p7"><span class="num">7</span>配置页</a>
+    <a href="chat.html" data-tab="p8"><span class="num">8</span>对话式操作台</a>
+  </nav>
+
+  <main>
+    <div class="sec-head"><h2>⑥ 集中度 KPI 看板</h2><span class="sec-tag">全部角色 · 只读</span></div>
+    <p class="sec-sub">只读看板，展示收拢成效与偏离（见 18 号 KPI 验收）。出库/移库实际执行不在此页，分别到「出库作业」「移库作业」页。</p>
+
+    <div class="kpis">
+      <div class="kpi">
+        <div class="k">同物料跨巷道均值</div>
+        <div class="v">4.8</div>
+        <div class="d">目标 ≤5 · 较 4 厂基线 11.7~22.4 ↓</div>
+      </div>
+      <div class="kpi">
+        <div class="k">拣货量加权集中度</div>
+        <div class="v">3.2</div>
+        <div class="d">目标 80% 拣货量落 ≤N 巷道（N=5）· 统一验收指标</div>
+      </div>
+      <div class="kpi ref">
+        <div class="k">单张开单跨巷道均值（参考）</div>
+        <div class="v">2.6</div>
+        <div class="d">参考监控 · 不作硬验收</div>
+      </div>
+      <div class="kpi">
+        <div class="k">推荐采纳率</div>
+        <div class="v">72%</div>
+        <div class="d">目标 ≥60% ✓</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>偏离批次表（可下钻 · 可发起移库）</h3>
+      <div class="filterbar wide">
+        <input class="f-inp" placeholder="搜索批次 / 物料 / 物料编码">
+        <select class="f-sel"><option>状态 全部</option><option>超标</option><option>达标</option></select>
+        <select class="f-sel"><option>跨巷道 ≥ 全部</option><option>≥3</option><option>≥5</option><option>≥7</option></select>
+        <span class="qcount2">共 23 条 · 超标 4 条</span>
+      </div>
+      <div class="tbl-scroll">
+        <table>
+          <tr><th>批次</th><th>物料编码</th><th>物料</th><th>跨巷道数</th><th>状态</th><th>操作</th></tr>
+          <tr><td>GJP2571201</td><td>MAT-50001</td><td>PET500 茉莉柚茶</td><td>2</td><td><span class="pill ok">达标</span></td><td>下钻 ›</td></tr>
+          <tr><td>GJP2571221</td><td>MAT-50001</td><td>PET500 茉莉柚茶</td><td>2</td><td><span class="pill ok">达标</span></td><td>下钻 ›</td></tr>
+          <tr><td>GJP2571305</td><td>MAT-60001</td><td>PET600 矿泉水</td><td><b style="color:var(--red)">7</b></td><td><span class="pill red">超标</span></td><td><a class="goto-link" href="transfer.html">发起移库 ›</a></td></tr>
+          <tr><td>GJP2571310</td><td>MAT-60001</td><td>PET600 矿泉水</td><td>6</td><td><span class="pill red">超标</span></td><td><a class="goto-link" href="transfer.html">发起移库 ›</a></td></tr>
+          <tr><td>GJP2571333</td><td>MAT-60001</td><td>PET600 矿泉水</td><td>5</td><td><span class="pill red">超标</span></td><td><a class="goto-link" href="transfer.html">发起移库 ›</a></td></tr>
+          <tr><td>GJP2570888</td><td>MAT-90001</td><td>包装辅材</td><td>3</td><td><span class="pill ok">达标</span></td><td>下钻 ›</td></tr>
+          <tr><td>GJP2570901</td><td>MAT-90001</td><td>包装辅材</td><td>4</td><td><span class="pill red">超标</span></td><td><a class="goto-link" href="transfer.html">发起移库 ›</a></td></tr>
+          <tr><td>GJP2570950</td><td>MAT-90001</td><td>包装辅材</td><td>2</td><td><span class="pill ok">达标</span></td><td>下钻 ›</td></tr>
+          <tr><td>GJP2571002</td><td>MAT-50002</td><td>PET500 蜂蜜绿茶</td><td>3</td><td><span class="pill ok">达标</span></td><td>下钻 ›</td></tr>
+          <tr><td>GJP2571020</td><td>MAT-50002</td><td>PET500 蜂蜜绿茶</td><td>2</td><td><span class="pill ok">达标</span></td><td>下钻 ›</td></tr>
+        </table>
+      </div>
+      <div class="note">表体在固定高度内滚动；支持按批次/物料/物料编码搜索与状态·跨巷道筛选；区分"新入库收拢不达标"与"历史库存拖累"；超标批次可下钻或一键发起移库。<a class="goto-link" href="transfer.html">到「移库作业」处理 ›</a></div>
+    </div>
+
+    <div class="card">
+      <h3>出库顺路取区（按巷道聚合拣货顺序 · 只读）</h3>
+      <div style="font-size:12.5px;color:var(--muted);margin-bottom:6px;">交货单 DO-88：同批集中到尽量少巷道，加权集中度超标高亮</div>
+      <div class="route">
+        <span class="seg">巷道 01（3 项）</span>
+        <span class="arrow">→</span>
+        <span class="seg">巷道 05（2 项）</span>
+        <span class="arrow">→</span>
+        <span class="seg hot">巷道 21（4 项 · 加权集中度超标）</span>
+      </div>
+      <div class="purpose">
+        <b>显示目的：</b>① 把同物料分散在多巷道的库存按巷道聚合成一条最短拣货动线，降低拣货员往返行走（即"以出定入"成效回看）；② 用"拣货量加权集中度"（统一验收指标）暴露入库收拢不达标处（如 DO-88 加权集中度超标、巷道 21 需 &gt;N 巷道），为移库补救 / 后续入库策略优化提供切入点；③ 只读派生，本区不执行出库，实际拣配确认在「出库作业」页。
+      </div>
+      <div style="font-size:11.5px;color:var(--muted);">顺路取质量由入库推荐质量决定，为只读派生，不重新决定落位。<a class="goto-link" href="outbound.html">到「出库作业」执行拣配 ›</a></div>
+    </div>
+
+    <div class="foot">⑥ 集中度 KPI 看板 · 按 21/22/24 号文档生成</div>
+  </main>
+</div>
+
+<a href="chat.html" class="dock" title="对话式操作台常驻浮窗">💬</a>
+<script src="assets/app.js"></script>
+</body>
+</html>
