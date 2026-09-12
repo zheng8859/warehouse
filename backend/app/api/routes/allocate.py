@@ -32,7 +32,8 @@
 来的调用方（二次确认卡）——行变了而版本没变，那边会以为自己读到的还是旧内容。
 
 **本模块不碰**：台账与 cap（8.3 的验证条件 —— 它本来就没碰，不是本模块的取舍）、
-权限与认证（8.4）、规模上限与空数组（8.5）。三处各有任务书，且各自有各自的理由。
+规模上限与空数组（8.5）。权限与认证（8.4）不是「不碰」：401 由中间件全局覆盖，
+第 2 层 403 由 `require_permission(inbound.operate)` 施加（仅仓管员/管理员，`13` §2.2）。
 
 ## 三处口径由本模块定，理由写在这里（`design.md` D10 的补记同步登记）
 
@@ -58,7 +59,8 @@ import sqlalchemy as sa
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db
+from app.api.deps import get_db, require_permission
+from app.api.permissions import Permission
 from app.core.concurrency import bump_lock_version
 from app.core.config import settings
 from app.core.config_version import pick_current_version
@@ -393,7 +395,9 @@ def _as_plan_item(
 
 @router.post("/batch", response_model=BatchAllocateResponse)
 def allocate_batch_plans(
-    payload: BatchAllocateRequest, session: Session = Depends(get_db)
+    payload: BatchAllocateRequest,
+    session: Session = Depends(get_db),
+    _authorized: None = Depends(require_permission(Permission.INBOUND_OPERATE)),
 ) -> BatchAllocateResponse:
     """一次批量分配：定序 → 贪心选道 → 四级降级 → 组装理由并落库（`14` §3.4）。
 

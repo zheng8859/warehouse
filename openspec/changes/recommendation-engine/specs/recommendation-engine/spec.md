@@ -232,7 +232,12 @@ A 类爆款被迫降级至远巷道或溢出区时，系统必须触发告警，
 #### Scenario: 未携带凭据返回 401
 - **GIVEN** 未携带任何凭据
 - **WHEN** 请求 `POST /api/allocate/batch`
-- **THEN** 返回 401（由认证中间件覆盖；本阶段不施加 403 资源级鉴权）
+- **THEN** 返回 401（由认证中间件覆盖）
+
+#### Scenario: 端点按 inbound.operate 鉴权
+- **GIVEN** 四个角色逐一持凭据调用 `POST /api/allocate/batch`
+- **WHEN** 检查返回码
+- **THEN** 仓管员与管理员返回 200，计划员与主管返回 403（`inbound.operate`；`engine.invoke` 恒 `AUTO_ONLY`，不参与鉴权）
 
 ### Requirement: 规模上限与评分性能
 

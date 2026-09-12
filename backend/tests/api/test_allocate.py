@@ -15,12 +15,13 @@
 
 ## 本文件覆盖 8.1 ~ 8.5 与 9.1 / 9.4
 
-**8.4（认证与权限）与前三节的关系**：它是**验证性**的一节，不改端点。401 由既有中间件
-返回、v1 不存在 403 —— 换句话说，8.4 落地时产品代码侧**一行都不用动**（8.3 同此）。
-留在这里而不是新开一个文件，理由与 8.2/8.3 相同：它们都要一套「引擎 + 工厂 + 应用」，
-而端点行为是同一份契约的不同侧面。**唯一不能因此省掉的是那条「无 403」的用例** —— 它
-钉的是一个**当前为真的否定事实**，写在这里意味着下一个人给端点加 checker 时，红的是
-本文件里一条有说明的用例，而不是某个前端页面。
+**8.4（认证与权限）与前三节的关系**：401 由既有中间件返回；端点级资源鉴权**已对
+`inbound.operate` 生效**（`POST /api/allocate/batch` 挂 `require_permission(inbound.operate)`，
+仅仓管员/管理员 200，计划员/主管 403，见 8.4 的用例）。留在这里而不是新开一个文件，
+理由与 8.2/8.3 相同：它们都要一套「引擎 + 工厂 + 应用」，而端点行为是同一份契约的不同
+侧面。**那条「谁被 403」的用例**钉的是「端点挂了 `inbound.operate` 这个检查」这件事本身
+—— 写在这里意味着下一个人摘掉或改错 checker 时，红的是本文件里一条有说明的用例，
+而不是某个前端页面。
 
 **8.1 那一节**（端点的**存在**、显式集合驱动、响应次序）对「已提交的那两条单」只断言
 产出方案、**不断言它们的 `status`** —— 当时停在 `PLANNED` 是 8.2 的事，8.1 的实现不该
@@ -985,32 +986,39 @@ def test_the_holders_of_inbound_operate(role: Role) -> None:
     assert check(role, Permission.ENGINE_INVOKE) is False
 
 
-def test_the_endpoint_does_not_enforce_the_permission_matrix_in_v1(api: Api) -> None:
-    """`permission` 规格的「v1 不做端点级资源鉴权」：持 `planner` 凭据照样 200，**不给 403**。
+@pytest.mark.parametrize(
+    "role", [Role.WAREHOUSE_KEEPER, Role.PLANNER, Role.SUPERVISOR, Role.ADMIN]
+)
+def test_the_endpoint_enforces_inbound_operate(api: Api, role: Role) -> None:
+    """端点级资源鉴权（`inbound.operate`，D10 的资源标识）：仅仓管员/管理员 200，计划员/主管 403。
 
-    这条钉的是一个**已知的、被文档承认的**缺口（`permissions.py` 的模块 docstring 首句：
-    「v1 事实：细粒度 RBAC 未实现」），不是为了放过它 —— 反过来才是：若有人现在就挂上
-    `PermissionChecker`，持 `planner` 凭据的真实调用方会当场 403，而 13 号此刻并没有这一层，
-    这个 403 是**实现自己发明的**拒绝。两条路都要有人拦，这一条拦的是「提前收紧」。
+    授权依据是**业务动作**（`inbound.operate`），不是 `engine.invoke`：引擎调用是业务动作的
+    内部后果（`engine.invoke` 恒 `AUTO_ONLY`，`check` 对任何角色都返回 False）。故本端点挂
+    `require_permission(inbound.operate)` —— 谁有 `inbound.operate` 谁就能触发它，主管连
+    `inbound.view` 都没有（`13` §2.2「入库执行不归主管」）。
 
-    **M5 落地时本条应当变红，那是它该有的样子** —— 届时把断言改成 403、并把它移出成功路径，
-    **不要删掉它**：删掉之后「端点的鉴权口径是哪一版」就再也没有可执行的说法了。
+    403 时还要断言**端点整个没跑**（方案行、状态、批次号都没动）：一个把鉴权写在端点内部
+    （先取数、再检查）的实现同样回 403，但库里已经写进去了。
     """
     scenario = _capacity_scenario(api, orders=1)
     (order_id,) = order_ids(scenario)
+    expected = 200 if check(role, Permission.INBOUND_OPERATE) else 403
 
     response = api.client.post(
         ALLOCATE_URL,
         json={"warehouse_id": WAREHOUSE_ID, "job_order_ids": [order_id]},
-        headers={"Authorization": f"Bearer {_token_for(api, Role.PLANNER)}"},
+        headers={"Authorization": f"Bearer {_token_for(api, role)}"},
     )
 
-    assert response.status_code == 200, (
-        "v1 不施加端点级资源鉴权 —— 拿到 403 说明有人提前挂上了 PermissionChecker；"
-        "若这是 M5 的落地，请按本条 docstring 改写而不是删掉"
-    )
-    assert len(api.plan_rows()) == 1
-    assert api.orders()[0].status is JobStatus.PLANNED
+    assert response.status_code == expected, role.value
+    if expected == 200:
+        assert len(api.plan_rows()) == 1
+        assert api.orders()[0].status is JobStatus.PLANNED
+    else:
+        assert response.json()["error"] == "permission_denied"
+        assert api.plan_rows() == ()
+        assert api.orders()[0].status is JobStatus.PENDING
+        assert api.orders()[0].bulk_batch_no is None
 
 
 # ------------------------------------------------------------------ 8.5 规模上限与空批
