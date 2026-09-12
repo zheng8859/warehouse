@@ -77,7 +77,10 @@ def _payload_of(token: str) -> dict:
 
 def test_issued_token_verifies() -> None:
     token = create_session_token(USER_ID, ROLE, STATUS, now=ISSUED_AT)
-    claims = decode_session_token(token)
+    # `now` 必须显式注入（本文件 docstring 的「纯函数、可注入」）：不传就走**真实墙钟**，
+    # 而 `ISSUED_AT` 是固定时刻 —— 于是这一例只在「签发后 8 小时内」跑才通过，
+    # 过了有效期就变成一条与代码无关的红。有效期本身由下面 `exp` 边界那组用例断言。
+    claims = decode_session_token(token, now=ISSUED_AT)
 
     assert claims["user_id"] == USER_ID
     assert claims["role"] == ROLE

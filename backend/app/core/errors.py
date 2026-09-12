@@ -61,7 +61,15 @@ class StateConflict(DomainError):
 class BlockedMissingPrerequisite(DomainError):
     """业务前置条件缺失 → 阻断。
 
-    典型：出库时库存快照缺失或过期 —— 阻断并提示重新导入，**不猜测落位**（15 §4.4）。
+    典型两处：
+
+    - 出库时库存快照缺失或过期 —— 阻断并提示重新导入，**不猜测落位**（15 §4.4）。
+    - 评分时**无生效的权重版本** —— 阻断并提示配置未就绪，**不拿一套没人批准过的权重
+      去排谁先挑黄金库位**（`17` §七 / `17` §10.1 的 `factors`；引擎侧取值见
+      `app/engine/scoring.py:load_weights`，`design.md` D4 的配置缺席处置表）。
+
+    两处的共同形状：**数据/口径没到位时，宁可不产出方案** —— 与「降级」明确不同
+    （降级是有取值的，只是取值不全；见模块 docstring 末条）。
     """
 
     http_status = 409
