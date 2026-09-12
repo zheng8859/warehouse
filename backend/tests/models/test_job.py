@@ -426,8 +426,10 @@ def test_actual_location_code_is_nullable_before_execution(session: Session) -> 
 def test_batch_no_is_nullable(session: Session) -> None:
     """批号可空：16 附录A 的 PO / DO 模版**都没有批号列**（PO 只有生产日期）。
 
-    入库单的批号在落位时才确定；出库单的批号由顺路取从库存明细里选出（17 §10.2 的
-    `pick_sequence[].batches`）。17 §4.1 把它列在「物料信息」里，故列存在、但此刻可空。
+    入库单的批号由**系统在入库单建立时按生产批规则生成**（同一生产批共用同一批号，
+    `17` §2.4 —— 生成规则本身属阶段四，故本阶段只保证列可空）；出库单的批号由顺路取
+    从库存明细里选出（17 §10.2 的 `pick_sequence[].batches`）。17 §4.1 把它列在
+    「物料信息」里，故列存在、但此刻可空。
     """
     row = _job_order(session, batch_no=None)
     assert row.batch_no is None

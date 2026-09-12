@@ -194,7 +194,9 @@ class JobOrder(BaseEntity):
     abc_class: Mapped[AbcClass | None] = enum_column(AbcClass, name="abc_class", nullable=True)
 
     #: 生产批号。可空：16 附录A 的 PO / DO 模版**都没有批号列**（PO 只有生产日期）——
-    #: 入库单的批号在落位时才确定，出库单的批号由顺路取从库存明细里选出（17 §10.2）。
+    #: 入库单的批号由**系统在入库单建立时按生产批规则生成**（同一生产批共用同一批号，
+    #: `17` §2.4；分配时刻已可读，规则本身属阶段四）；出库单的批号由顺路取从库存明细里
+    #: 选出（17 §10.2）。
     batch_no: Mapped[str | None] = mapped_column(sa.String(64), nullable=True)
 
     status: Mapped[JobStatus] = enum_column(
