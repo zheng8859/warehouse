@@ -290,31 +290,58 @@ Go/No-Go 闸门：集中度达成率 ≥70% 且趋势向好 + 护栏全过 → G
 
 ---
 
-## 十一、当前状态与待办（阶段一）
+## 十一、当前状态与待办（阶段三）
 
-**阶段一已收尾，`v0.1.0` 已打标。**
+**阶段一、二已收尾并打标（`v0.1.0` / `v0.2.0`）。阶段三实现在 `phase-3/engine` 分支上：
+主体已完成，尚未合并、尚未打 `v0.3.0`。**
 
-**已完成**：`openspec/` 已初始化且 `config.yaml` 已填 · `backend/` 骨架 · 本文件 · `CONTEXT.md` ·
-`git init`（`main` 分支，origin = 本地裸仓库 `D:\成品库位智能推荐\warehouse-origin.git`）·
-no-mistakes 已 `init`（二进制本机已存在，见第十二节）·
+**阶段一（`v0.1.0`）**：`openspec/` 已初始化且 `config.yaml` 已填 · `backend/` 骨架 · 本文件 ·
+`CONTEXT.md` · `git init`（`main` 分支，origin = 本地裸仓库 `D:\成品库位智能推荐\warehouse-origin.git`）·
+no-mistakes 已 `init`（二进制本机已存在，见第十二节）· graphify 已验证端到端可用（见第十三节）·
 新增 `env` scope（`00` §4.2 正本 + 校验脚本同步，见第六节）·
-graphify 已验证端到端可用（见第十三节）·
-首次提交 `6fdc73c` ·
-`v0.1.0` 已打标（阶段一收尾）并推送 origin ·
 venv（`backend/.venv`）已建、`requirements.txt` 已装 ·
-**pre-commit 三类钩子已装并实测通过** ·
+**pre-commit 三类钩子已装并实测通过**（装法见下）·
 `backend/tests/api/test_smoke.py`：9 条装配冒烟测试（装配完整性 / 认证中间件 / 白名单）·
-换行符统一为 LF（`.gitattributes`）
+换行符统一为 LF（`.gitattributes`）· 首次提交 `6fdc73c`
 
-**阶段三增量**：`InventoryItem.zone` 已清退（`retire-zone-column`，含迁移 `99ed4f7e48cd`）——
+**阶段二（`v0.2.0`）**：23 个实体（按 `17` 四条数据链分组）·
+Alembic 迁移链（`backend/migrations/versions/`，7 个修订）·
+JWT（HS256）认证 + 权限矩阵骨架（`13` §2.2 的逐条搬运）· 乐观锁校验辅助 ·
+`backend/scripts/init_db.py` / `seed_dev.py` · **546 passed**。
+变更 `data-model-permission` 已归档，主规格 `openspec/specs/{auth,data-model,permission}/spec.md`
+已由 delta 写入
+
+**阶段二/三交界**：`InventoryItem.zone` 已清退（变更 `retire-zone-column`，迁移 `99ed4f7e48cd`）——
 该列的两处文档来源（`17` §3.3 字段枚举、`16` A.1 INV 模版）都已清退，且全仓从无读写方
 （无 DTO 字段、无 importer 映射、无因子读它），留一个无来源又无消费方的列只会让
-「实体字段以 `17` 为准」这条口径持续失真。
+「实体字段以 `17` 为准」这条口径持续失真。该变更**尚未归档**（分支已合并、已删）
 
-**未完成**（均为阶段二起）：
+**阶段三（`27` · 设计 `14`）**：`app/engine/` 六个模块 —— 因子取数与归一化（`factors.py`）、
+权重 / 候选集 / 综合评分（`scoring.py`）、近站台预留池（`reserved.py`）、四级降级链
+（`degradation.py`）、队列优先级（`priority.py`）、批量竞争分配主循环（`allocator.py`）；
+推荐理由的可追溯契约（`reasons.py` + `schemas/reason.py`，含每巷 × 每因子取值与两种降级标记）；
+`POST /api/allocate/batch`（`app/api/routes/allocate.py`）。
+**本阶段无真实数据**（导入管线属阶段四），四类输入全空是预期状态（`16` §394）。
+当前 **784 passed**（本次墙钟 4.82s；本阶段多次实测 4.8–5.7s，**横跨 `00` 的 `<5s` 预算线**，
+钩子不强制，见记忆条目 `l1-budget-pressure`），其中逻辑层 493 条 / 约 1.5s。
+变更 `recommendation-engine` 的任务 **40/40 完成**（全部实现并变异验证），**已提交**
+（本阶段 3 条原子提交：引擎与测试 / 批号口径订正 / 变更产物）—— **尚未合并、尚未打
+`v0.3.0`、尚未归档**。`openspec validate` 退出 0（13 条 `⚠` 全是 RFC2119 假警报，见记忆条目）。
 
-- `backend/scripts/init_db.py`、`seed_dev.py` —— 阶段二随模型实现
+**D14 的默认值**：四项里 **N 已确认 = 3 天**（业务方 2026-09-12；正本 `14` §3.2，
+落地 `priority.DEFAULT_OUTBOUND_WINDOW_DAYS`）。**本阶段零行为变更** —— 阶段三无取数来源，
+`outbound_qty` 由调用方给出，N 到阶段四聚合落地才参与计算。仍待确认三项：优先级权重系数、
+板-格换算规则、分档阈值与溢出区形态（`grep -rn "TODO(design.md D14" backend/app/` 得全量）。
+另注意 `16` §360 的「ABC 统计窗口 / N 天」是**另一个 N**，尚未确认
+
+**未完成**：
+
 - `backend/evals/run_evals.py` —— 阶段六实现；现在跑刻意以退出码 3 失败
+- 四类文件导入管线与 cap 自维护（`app/importer/` / `app/cap/`）—— 阶段四
+- 三类作业管线与台账（`app/services/`）—— 阶段四
+- 冷路径 LLM（`app/llm/`）、KPI 看板、前端 8 页 —— 阶段五 / 六 / 七
+- 两条**已合并**的本地分支仍在（`phase-2/data-model-permission`、
+  `clarify/401-failure-semantics`）—— 待清理
 
 ### pre-commit 钩子：装之前先读这条
 
