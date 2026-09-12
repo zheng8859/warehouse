@@ -115,9 +115,14 @@ class WeightConfig(BaseEntity):
     #: `lock_version` 只给 `JobOrder` / `ImportSession`（D1）。
     version_no: Mapped[int] = mapped_column(sa.Integer, nullable=False)
 
-    #: 生效时间（naive UTC，与 `created_at` 同一口径）。**可预约生效**：
-    #: 时间未到即不参与选取（`is_effective`），故它是「什么时候开始能用」，
-    #: 而不是「什么时候写的」—— 后者由 `created_at` 回答。
+    #: 生效时间。**可预约生效**：时间未到即不参与选取（`is_effective`），故它是
+    #: 「什么时候开始能用」，而不是「什么时候写的」—— 后者由 `created_at` 回答。
+    #:
+    #: **钟口径 = 现场墙上时间（业务钟），不是 `created_at` 那样的 naive UTC**：
+    #: 「预约 9/12 08:00 生效」是给现场看的话，与 `reserved_release_at` 的「当日 18:00」
+    #: 同类。分界与判据见 `openspec/changes/recommendation-engine/design.md` D17
+    #: （2026-09-11 订正；此前的注释写作 naive UTC，那是尚未区分业务钟与审计钟时的措辞）。
+    #: 全仓无写入方用 `utcnow()` 写本列，故订正不涉及数据。
     effective_at: Mapped[datetime] = mapped_column(nullable=False)
 
     #: 变更人（17 §七）。**可空**：首版权重由种子写入，没有变更人；沿用
@@ -187,7 +192,8 @@ class CapacityConfig(BaseEntity):
     #: 业务版本号（D1），理由同 `WeightConfig.version_no`。
     version_no: Mapped[int] = mapped_column(sa.Integer, nullable=False)
 
-    #: 生效时间（naive UTC），理由同 `WeightConfig.effective_at`。
+    #: 生效时间（**现场墙上时间**），理由同 `WeightConfig.effective_at`。与本表的
+    #: `reserved_release_at` 同一钟口径 —— 两者都是「给现场看的钟点」。
     effective_at: Mapped[datetime] = mapped_column(nullable=False)
 
     #: 近站台预留比例（16 §353~356：默认 40%）。存 0~1 的比例而非百分数：与

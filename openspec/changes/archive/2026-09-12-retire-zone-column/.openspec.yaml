@@ -1,0 +1,5 @@
+schema: spec-driven
+created: 2026-09-11
+# 零 spec delta：data-model 主规格的 10 条需求通篇不枚举列，删一个无消费方的列不触碰任何一条
+# （字段级口径的事实来源是 17，不是 spec）。不发明一条需求来满足校验 —— 理由见 proposal.md。
+skip_specs: true

@@ -43,9 +43,12 @@
    `ledgers` 后由迁移 `f01b0406d12c` 用 `batch_alter_table` 补上**（SQLite 改约束必须走
    batch 重建）。此前 §3 欠的账由 `tests/logic/test_cap_alert.py` 收紧的用例看住
    （断言从「方向」改成等号，并新增一条真外键的负例）；tasks.md 9.4b 已据此销账。
-5. **`InventoryItem.zone` / `production_date` 保留但可空**。17 §3.3 的字段表列了这两列，
-   而 16 A.1 的 INV 模版已把它们移除（「库区号、生产日期不再需要」）。本表按 17 的字段清单
-   保留列（17 是实体字段的单一事实来源），按 A.1 的实际可得性置为可空 —— 冲突登记在 9.4b。
+5. **`InventoryItem.production_date` 保留但可空**。17 §3.3 的字段表列了它，而 16 A.1 的 INV
+   模版已把它移除（「库区号、生产日期不再需要」）。本表按 17 的字段清单保留列（17 是实体字段
+   的单一事实来源），按 A.1 的实际可得性置为可空。
+   同组的 `InventoryItem.zone` **已于 `retire-zone-column` 移除**：它的两处文档来源（17 §3.3 的
+   字段枚举、16 的模版）都已清退，且全仓从无读写方（无 DTO 字段、无 importer 映射、无因子读它）——
+   留一个无来源又无消费方的列，只会让「实体字段以 17 为准」这条口径持续失真。
 6. **时间戳按「解析起止 + 里程碑」分列**。16 §3.3 给了四个里程碑（创建 / 校验完成 /
    导入完成 / 建基准完成），design.md 的性能目标表另要求「`ImportSession` 记录解析起止时间
    以支撑解析 ≤5min/文件 的 SLA」。故除 `created_at` 外另有 `validating_at`（解析起点）
@@ -209,11 +212,6 @@ class InventoryItem(BaseEntity):
         sa.ForeignKey("snapshots.id"), nullable=False
     )
 
-    #: 库区号。17 §3.3 列了它，但 16 A.1 的 INV 模版已移除该列（模块 docstring 第 5 条）——
-    #: 真实导入通常为空，故可空。它是「可行巷道集」的匹配条件之一（14 §3.4），
-    #: 长期为空会让该条件失效，已在 9.4b 登记。
-    zone: Mapped[str | None] = mapped_column(sa.String(32), nullable=True)
-
     #: 库位号，6 位文本 —— 前导 0 不得丢（Excel 数值化会丢，CLAUDE.md §七）。
     location_code: Mapped[str] = mapped_column(sa.String(6), nullable=False)
 
@@ -224,7 +222,7 @@ class InventoryItem(BaseEntity):
 
     batch_no: Mapped[str] = mapped_column(sa.String(64), nullable=False)
 
-    #: 生产日期。同 `zone`：17 列了、A.1 模版已移除 → 可空。
+    #: 生产日期。17 §3.3 列了它、16 A.1 的 INV 模版已移除 → 可空（模块 docstring 第 5 条）。
     production_date: Mapped[date | None] = mapped_column(sa.Date, nullable=True)
 
     #: 库存品质状态（16 A.1 的「状态」）。**不建 CHECK**：取值域以 GTJ10036 导出为准，

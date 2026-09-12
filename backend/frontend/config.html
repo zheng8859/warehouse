@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>⑦ 配置页 · 成品库位智能推荐</title>
+<link rel="stylesheet" href="assets/styles.css">
+</head>
+<body data-page="p7">
+
+<header>
+  <div class="logo">库</div>
+  <h1>成品库位智能推荐</h1>
+  <div class="meta">
+    <span>工厂：<b>GTJ10036</b></span>
+    <span>版本：<b>PRD v0.16</b></span>
+  </div>
+</header>
+
+<div class="wrap">
+  <nav>
+    <div class="nt">8 个页面</div>
+    <a href="login.html" data-tab="p1"><span class="num">1</span>登录页</a>
+    <a href="data-import.html" data-tab="p2"><span class="num">2</span>数据导入页</a>
+    <div class="grp">— 三类作业 —</div>
+    <a href="inbound.html" data-tab="p3"><span class="op-ic" style="background:var(--green)">入</span>入库作业</a>
+    <a href="outbound.html" data-tab="p4"><span class="op-ic" style="background:var(--blue)">出</span>出库作业</a>
+    <a href="transfer.html" data-tab="p5"><span class="op-ic" style="background:var(--amber)">移</span>移库作业</a>
+    <div class="grp">— 看板与配置 —</div>
+    <a href="kpi-dashboard.html" data-tab="p6"><span class="num">6</span>集中度 KPI 看板</a>
+    <a href="config.html" data-tab="p7"><span class="num">7</span>配置页</a>
+    <a href="chat.html" data-tab="p8"><span class="num">8</span>对话式操作台</a>
+  </nav>
+
+  <main>
+    <div class="sec-head"><h2>⑦ 配置页</h2><span class="sec-tag">管理员 · P0-F2</span></div>
+    <p class="sec-sub">配置页含 5 个子模块：导入模板、cap 口径、评分因子权重、近站台预留比例、对话指令词配置。子导航切换查看。</p>
+
+    <div class="cf-subnav">
+      <button class="active" data-ctab="c1">导入模板</button>
+      <button data-ctab="c2">cap 口径</button>
+      <button data-ctab="c3">评分因子权重</button>
+      <button data-ctab="c4">近站台预留比例</button>
+      <button data-ctab="c5">对话指令词配置</button>
+    </div>
+
+    <div id="p7">
+      <!-- 7.1 导入模板 -->
+      <div id="c1">
+        <div class="sec-head"><h2>① 导入模板</h2><span class="sec-tag">文件级衔接契约</span></div>
+        <p class="sec-sub">把 WMS/SAP 导出的三类文件约定成固定模板，让系统能稳定解析、校验、复用。模板持久化后同厂后续导入无需重配。</p>
+
+        <div class="card">
+          <h3>导入模板（三类必配 + BI 统计类）</h3>
+          <div class="cf-tmpl">
+            <div class="t">
+              <div class="th">生产订单 (PO) <span class="pill ok">必填</span></div>
+              <div class="line">文件名规则：<code>PO_*{yyyyMMdd}.xlsx</code></div>
+              <div class="line">格式：Excel / CSV</div>
+              <div class="line">字段数：9 列（16 号 A）</div>
+              <div class="line">关键列：料号·品名·箱数·期望入库时间</div>
+              <div class="line">⚠ PO 不含批号（批号过账时生成）</div>
+              <div class="line">→ 驱动「入库作业」待推荐队列</div>
+            </div>
+            <div class="t">
+              <div class="th">交货单 (DO) <span class="pill ok">必填</span></div>
+              <div class="line">文件名规则：<code>DO_*{yyyyMMdd}.xlsx</code></div>
+              <div class="line">格式：Excel / CSV</div>
+              <div class="line">字段数：9 列（16 号 A）</div>
+              <div class="line">关键列：料号·出库量·交期</div>
+              <div class="line">用途：以出定入（因子4 调权）</div>
+              <div class="line">→ 驱动「出库作业」拣配任务</div>
+            </div>
+            <div class="t">
+              <div class="th">库存快照 <span class="pill ok">必填</span></div>
+              <div class="line">文件名规则：<code>INV_*{yyyyMMdd}.xlsx</code></div>
+              <div class="line">格式：Excel / CSV</div>
+              <div class="line">字段数：8 列（16 号 A）</div>
+              <div class="line">关键列：库位·料号·批号·数量</div>
+              <div class="line">时点：每日早8点反馈前日24点</div>
+              <div class="line">→ 建立 cap 基线</div>
+            </div>
+            <div class="t">
+              <div class="th">成品清单（统计类） <span class="pill warn">低频</span></div>
+              <div class="line">文件名规则：<code>BI_*.xlsx</code></div>
+              <div class="line">格式：Excel / CSV</div>
+              <div class="line">字段数：4 列（16 号 A）</div>
+              <div class="line">用途：ABC 聚合 / 出库量</div>
+              <div class="line">→ 不建基线、不阻断作业</div>
+            </div>
+          </div>
+          <div style="margin-top:13px;display:flex;gap:10px;">
+            <button class="btn soft">＋ 新增导入模板</button>
+            <button class="btn ghost">下载模板样例</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>数据时点标注</h3>
+          <div class="row">
+            <div class="field"><label>导入即基准 · 数据时点（必填）</label><input value="2026-09-10" type="date"></div>
+            <div class="field"><label>时点缺失策略</label>
+              <select><option>拒绝导入并提示（推荐）</option><option>取文件修改时间</option></select></div>
+          </div>
+          <div class="note">"导入即基准"：推荐与 cap 均基于该时点快照。未标注时点须阻断导入，不得带病入库。</div>
+        </div>
+      </div>
+
+      <!-- 7.2 cap 口径 -->
+      <div id="c2" class="hidden">
+        <div class="sec-head"><h2>② cap 口径</h2><span class="sec-tag">P0-F9 巷道容量自维护</span></div>
+        <p class="sec-sub">定义每条巷道的"剩余可放板数"怎么算、怎么随事务增量维护。cap 由快照建基线，随入库/出库/移库事务增量更新，是评分引擎的可竞价资源。</p>
+
+        <div class="card">
+          <h3>cap 计算公式</h3>
+          <div class="row">
+            <div class="field"><label>巷道总格数来源</label>
+              <select><option>库存快照·库位总数聚合</option><option>静态主数据</option></select></div>
+            <div class="field"><label>已占格数计算时点</label>
+              <select><option>基于数据时点快照</option></select></div>
+          </div>
+          <div style="font-size:13px;background:#fbfdff;border:1px solid var(--line);border-radius:7px;padding:11px 13px;">
+            <code>cap[巷道] = 巷道总格数 − 已占格数</code>
+            <span class="pill" style="margin-left:8px;">按库位号前2位切片聚合</span>
+          </div>
+          <div class="field" style="margin-top:11px;">
+            <label>cap 基线建立方式</label>
+            <input value="导入库存快照 → 按巷道聚合建立基线 → 随事务增量维护">
+          </div>
+          <div class="field">
+            <label>异常告警阈值（cap 维护异常 / 负 cap）</label>
+            <input value="cap &lt; 0 或 单巷道占用率 &gt; 95% 触发告警">
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>cap 基线示例（GTJ10036）</h3>
+          <table>
+            <tr><th>巷道</th><th>总格数</th><th>已占</th><th>剩余 cap</th><th>状态</th></tr>
+            <tr><td><code>01</code></td><td>120</td><td>100</td><td>20</td><td><span class="pill warn">偏紧</span></td></tr>
+            <tr><td><code>05</code></td><td>120</td><td>85</td><td>35</td><td><span class="pill ok">充足</span></td></tr>
+            <tr><td><code>21</code></td><td>120</td><td>112</td><td>8</td><td><span class="pill warn">紧张</span></td></tr>
+          </table>
+          <div class="note">cap 不足本次入库量时，评分引擎不将其列入候选或标注溢出（防 cap 失准）。增量维护异常须告警。</div>
+        </div>
+      </div>
+
+      <!-- 7.3 评分因子权重 -->
+      <div id="c3" class="hidden">
+        <div class="sec-head"><h2>③ 评分因子权重</h2><span class="sec-tag">6 因子 · 权重滑块</span></div>
+        <p class="sec-sub">6 因子决定"在可行巷道集内放哪条巷道好"。权重在此处可调，修改在<strong>下次评分生效</strong>，规则可配不写死。示例值待现场确认。</p>
+
+        <div class="card">
+          <h3>6 因子权重（合计 100%）</h3>
+          <div class="cf-slider"><span class="name">ABC 等级</span><input type="range" min="0" max="40" value="22"><span class="val">22%</span></div>
+          <div class="cf-slider"><span class="name">巷道 cap（库容）</span><input type="range" min="0" max="40" value="20"><span class="val">20%</span></div>
+          <div class="cf-slider"><span class="name">既有库位</span><input type="range" min="0" max="40" value="18"><span class="val">18%</span></div>
+          <div class="cf-slider"><span class="name">站台就近</span><input type="range" min="0" max="40" value="16"><span class="val">16%</span></div>
+          <div class="cf-slider"><span class="name">批次</span><input type="range" min="0" max="40" value="12"><span class="val">12%</span></div>
+          <div class="cf-slider"><span class="name">连续性</span><input type="range" min="0" max="40" value="12"><span class="val">12%</span></div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;">
+            <span class="pill">合计：100%</span>
+            <div style="display:flex;gap:10px;">
+              <button class="btn ghost">重置默认</button>
+              <button class="btn">保存并生效</button>
+            </div>
+          </div>
+          <div class="note">权重调优建议为 P2 路线图（规则统计+反事实模拟，LLM 生成建议，人采纳才生效，参数变更有风险）。当前首期由现场拍板配置。</div>
+        </div>
+
+        <div class="card">
+          <h3>6 因子 → 数据来源</h3>
+          <table>
+            <tr><th>#</th><th>因子</th><th>来源（文件级）</th></tr>
+            <tr><td>1</td><td>ABC</td><td>成品清单按料号聚合出库量→帕累托</td></tr>
+            <tr><td>2</td><td>巷道 cap</td><td>库存快照按巷道聚合</td></tr>
+            <tr><td>3</td><td>既有库位</td><td>库存快照按料号→去重巷道集</td></tr>
+            <tr><td>4</td><td>站台就近</td><td>巷道-站台主数据（需补充导出）+ DO 出库量</td></tr>
+            <tr><td>5</td><td>批次</td><td>库存快照既有批号分布（代理）</td></tr>
+            <tr><td>6</td><td>连续性</td><td>库存快照库位编码相邻性</td></tr>
+          </table>
+        </div>
+      </div>
+
+      <!-- 7.4 近站台预留比例 -->
+      <div id="c4" class="hidden">
+        <div class="sec-head"><h2>④ 近站台预留比例</h2><span class="sec-tag">F3 批量分配子能力</span></div>
+        <p class="sec-sub">为 A 类爆款在近站台巷道预留稀缺黄金库容；非 A 类不得占用预留池；超时未用自动释放，避免空置。对应 PRD 13.1 决策 + 03 §3.3。</p>
+
+        <div class="card">
+          <h3>预留参数</h3>
+          <div class="cf-slider"><span class="name">A 类预留比例</span><input type="range" min="0" max="80" value="40"><span class="val">40%</span></div>
+          <div class="cf-slider"><span class="name">超时释放时点</span><input type="range" min="12" max="22" value="18"><span class="val">18:00</span></div>
+          <div class="cf-toggle"><div class="cf-switch" id="reserveSwitch"></div> 非 A 类订单不得占用预留池（强制）</div>
+        </div>
+
+        <div class="card">
+          <h3>近站台巷道集（预留作用域）</h3>
+          <div class="cf-tmpl">
+            <div class="t"><div class="th">巷道 01 <span class="pill ok">近站台</span></div>
+              <div class="line">就近站台：A（权重 0.9）</div>
+              <div class="line">总 cap：120 板</div></div>
+            <div class="t"><div class="th">巷道 02 <span class="pill ok">近站台</span></div>
+              <div class="line">就近站台：A（权重 0.9）</div>
+              <div class="line">总 cap：120 板</div></div>
+            <div class="t"><div class="th">巷道 21 <span class="pill warn">远站台</span></div>
+              <div class="line">就近站台：B（权重 0.3）</div>
+              <div class="line">总 cap：120 板</div></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>容量分配可视化（以巷道总 cap=100 板示意）</h3>
+          <div class="cf-bar">
+            <div class="r" style="width:40%"></div>
+            <div class="u" style="width:60%"></div>
+          </div>
+          <div class="cf-legend">
+            <span class="lr">预留池（A 类专用）40%</span>
+            <span class="lu">可用池（全体可用）60%</span>
+          </div>
+          <div style="margin-top:10px;font-size:12.5px;color:var(--muted);line-height:1.7;">
+            <code>cap_reserved = cap_total × 近站台预留比例</code>（仅近站台巷道）<br>
+            <code>cap_usable = cap_total − cap_reserved</code>（非 A 类仅能用此部分）<br>
+            A 类可用 <code>cap_total</code>；超时（如 18:00）未用完自动释放给 B/C 类。
+          </div>
+          <div class="note">算例：同一批货，爆款在近站台占比从逐单模式的 0% 提升到批量分配的 67%。预留比例默认值建议 40%（开放问题，待仓储主管+管理员确认）。</div>
+        </div>
+      </div>
+
+      <!-- 7.5 对话指令词配置 -->
+      <div id="c5" class="hidden">
+        <div class="sec-head"><h2>⑤ 对话指令词配置</h2><span class="sec-tag">对话式操作台 · 指令→功能映射</span></div>
+        <p class="sec-sub">维护对话式操作台的"话术 → 功能"映射（L0 快捷指令 + L2 常用复杂问句模板）。新增话术由管理员配置，无需改代码。读操作直出卡片，写操作强制确认卡。</p>
+
+        <div class="card">
+          <h3>指令词映射表</h3>
+          <table>
+            <tr><th>指令 / 示例话术</th><th>映射到功能</th><th>类型</th><th>状态</th></tr>
+            <tr><td>"今天这批货放哪" / "跑一下今日推荐"</td><td>触发入库作业队列批量分配</td><td><span class="pill">读（待确认）</span></td><td><span class="pill ok">启用</span></td></tr>
+            <tr><td>"PO-01 按推荐入库"</td><td>入库作业 · 落位执行</td><td><span class="pill warn">写（需确认）</span></td><td><span class="pill ok">启用</span></td></tr>
+            <tr><td>"查 DO-88 的顺路取顺序"</td><td>出库作业 · 顺路取查看</td><td><span class="pill">读</span></td><td><span class="pill ok">启用</span></td></tr>
+            <tr><td>"把 21 巷道的茉莉柚茶收拢到 01"</td><td>移库作业 · 移库执行</td><td><span class="pill warn">写（需确认）</span></td><td><span class="pill ok">启用</span></td></tr>
+            <tr><td>"今天跨巷道数多少" / "爆款集中度"</td><td>KPI 看板</td><td><span class="pill">读</span></td><td><span class="pill ok">启用</span></td></tr>
+          </table>
+          <div style="margin-top:13px;display:flex;gap:10px;">
+            <button class="btn soft">＋ 新增指令词</button>
+            <button class="btn ghost">导入话术模板</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>意图识别分层（可渐进）</h3>
+          <table>
+            <tr><th>层级</th><th>做法</th><th>是否需模型</th></tr>
+            <tr><td>L0 结构化入口</td><td>快捷指令按钮+表单</td><td>否（首期必做）</td></tr>
+            <tr><td>L2 外部 LLM NLU</td><td>外部 LLM 意图分类（按 12.5 脱敏）</td><td>是·外部（可选增强）</td></tr>
+            <tr><td>L3 自主规划 Agent</td><td>—</td><td>不做（违反 12.1）</td></tr>
+          </table>
+          <div class="note">三类作业走 L0 按钮直达；KPI 指标查询由看板直呈并可下钻（不设固定语句模板，避免重复维护）；需要 LLM 分析的复杂问句走 L2 外部 LLM（统一外部调用，不考虑本地部署）。写操作一律确认卡→人工确认→调用对应作业页流程，对话台不产生第二套逻辑。</div>
+        </div>
+
+        <div class="card">
+          <h3>冷路径 AI 辅助开关（09 原则④ · 一键关闭）</h3>
+          <div class="cf-toggle">
+            <div class="cf-switch" id="aiSwitch"></div>
+            <span>冷路径 AI 辅助（L2 外部 LLM）当前：<b style="color:var(--green)">开启</b> · 关闭后对话台仅保留 L0 结构化入口</span>
+          </div>
+          <div class="note">关闭后对话台不调用外部 LLM，仅保留 L0 按钮直达作业页 + KPI 看板直呈。核心链路（入库/出库/移库）不受影响，仍由规则引擎驱动。</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="foot">⑦ 配置页 · 按 21/22/24 号文档生成</div>
+  </main>
+</div>
+
+<a href="chat.html" class="dock" title="对话式操作台常驻浮窗">💬</a>
+<script src="assets/app.js"></script>
+</body>
+</html>

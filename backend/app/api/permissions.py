@@ -4,8 +4,10 @@
           22-前端页面设计规格 §2.1 ⑦（配置页的 5 个子模块）
           spec `auth`（角色与权限）、tasks.md §8（补测范围）
 
-**v1 事实：细粒度 RBAC 未实现。** 首期只有角色菜单可见性 + 写操作二次确认。
-本模块的 `ROLE_PERMISSIONS` 是**权威目标模型**，RBAC 落地后（M5）由此强制。
+**v1 事实：细粒度 RBAC 部分落地。** 首期有角色菜单可见性 + 写操作二次确认，
+外加 `POST /api/allocate/batch` 的端点级资源鉴权（`inbound.operate`，经
+`deps.require_permission` 施加，仅仓管员/管理员）。本模块的 `ROLE_PERMISSIONS`
+仍是**权威目标模型**，其余业务端点的 RBAC 落地后（M5）由此强制。
 无权时返回 HTTP 403。
 
 本文件是 13 号 §2.2 矩阵的逐条搬运。改动矩阵前先改 13 号文档。

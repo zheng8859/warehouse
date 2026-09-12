@@ -6,10 +6,11 @@
   `get_db`           → 数据库会话
   `current_account`  → 当前账号（第 1 层认证的产物）
 
-**这里没有第 2 层**：矩阵本身在 `app/api/permissions.py`（13 §2.2 的逐条搬运），
-但把它挂成依赖注入（`require(resource, action)` 之类）是路线图 RBAC 的工作 ——
-本阶段不做端点级资源鉴权（design.md D9），故此处**不预置空壳**：一个永远返回
-「允许」的 `require()` 比没有它更糟，读的人会以为某条路径已经被强制了。
+**第 2 层在这里起步**：矩阵本身在 `app/api/permissions.py`（13 §2.2 的逐条搬运），
+`require_permission(permission)` 把它挂成依赖注入。v1 只对 `POST /api/allocate/batch`
+施加 `inbound.operate`；其余业务端点的资源级鉴权仍是路线图 RBAC（M5）的工作，故此处
+**不预置**一个永远返回「允许」的空壳 `require()` —— 一个永远放行的检查器比没有它更糟，
+读的人会以为某条路径已经被强制了。
 
 ## 会话工厂读的是 `app.state.session_factory`
 
@@ -23,13 +24,14 @@
 """
 from __future__ import annotations
 
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 
 from fastapi import Request
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.api.permissions import Permission, check
 from app.core.enums import AccountStatus
-from app.core.errors import Unauthenticated
+from app.core.errors import PermissionDenied, Unauthenticated
 from app.models.identity import Account
 
 #: 账号不可用时的统一说法。**不区分**「不存在」与「状态不是 active」：
@@ -98,3 +100,29 @@ def current_account(request: Request) -> Account:
         # 或 dependency_overrides 绕开了中间件。两种都是装配错误，且不安全。
         raise Unauthenticated("缺少会话凭据")
     return account
+
+
+def require_permission(permission: Permission) -> Callable[[Request], None]:
+    """第 2 层资源级鉴权依赖：当前角色须持有 `permission`，否则 403。
+
+    角色取自 `request.state.role`（中间件已把凭据里的 `role` 转成 `Role` 成员，
+    见 `middleware._as_role`）。**不复用 `current_account`**：它返回 `Account`，
+    而角色在凭据里（13 §6.2「从凭据解析 user_id、role」），不在账号行上。
+
+    取不到 role（端点被挂在 `/api/*` 之外、中间件不管辖）按未认证处理 —— 与
+    `current_account` 的同一处置：那是装配错误，不是「权限不足」。
+
+    v1 只有 `POST /api/allocate/batch` 用它（`inbound.operate`）；其余端点的资源级
+    鉴权是路线图 RBAC（M5）的工作，故本依赖不设一个「允许一切」的默认行为。
+    """
+    def _checker(request: Request) -> None:
+        role = getattr(request.state, "role", None)
+        if role is None:
+            raise Unauthenticated("缺少会话凭据")
+        if not check(role, permission):
+            raise PermissionDenied(
+                f"角色 {role.value} 无权执行 {permission.value}",
+                detail={"role": role.value, "permission": permission.value},
+            )
+
+    return _checker

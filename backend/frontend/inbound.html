@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>③ 入库作业 · 成品库位智能推荐</title>
+<link rel="stylesheet" href="assets/styles.css">
+</head>
+<body data-page="p3">
+
+<header>
+  <div class="logo">库</div>
+  <h1>成品库位智能推荐</h1>
+  <div class="meta">
+    <span>工厂：<b>GTJ10036</b></span>
+    <span>版本：<b>PRD v0.16</b></span>
+  </div>
+</header>
+
+<div class="wrap">
+  <nav>
+    <div class="nt">8 个页面</div>
+    <a href="login.html" data-tab="p1"><span class="num">1</span>登录页</a>
+    <a href="data-import.html" data-tab="p2"><span class="num">2</span>数据导入页</a>
+    <div class="grp">— 三类作业 —</div>
+    <a href="inbound.html" data-tab="p3"><span class="op-ic" style="background:var(--green)">入</span>入库作业</a>
+    <a href="outbound.html" data-tab="p4"><span class="op-ic" style="background:var(--blue)">出</span>出库作业</a>
+    <a href="transfer.html" data-tab="p5"><span class="op-ic" style="background:var(--amber)">移</span>移库作业</a>
+    <div class="grp">— 看板与配置 —</div>
+    <a href="kpi-dashboard.html" data-tab="p6"><span class="num">6</span>集中度 KPI 看板</a>
+    <a href="config.html" data-tab="p7"><span class="num">7</span>配置页</a>
+    <a href="chat.html" data-tab="p8"><span class="num">8</span>对话式操作台</a>
+  </nav>
+
+  <main>
+    <div class="sec-head"><h2>③ 入库作业（库位推荐 + 批量落位）</h2><span class="sec-tag">登录后 · 已导入 PO</span></div>
+    <p class="sec-sub">筛选 → 勾选多张生产订单 → 批量分配并落位（亦可逐单微调）。决策权在人（L1）。落位即入库，写入【入库台账】（见 14 号批量分配 + 15 号入库管线）。</p>
+
+    <div class="op-banner">
+      <span class="tag">入库</span>
+      <b>生产订单 → 驱动入库作业；库存快照 → 建立 cap 基线</b>
+    </div>
+
+    <div class="filterbar wide">
+      <input class="f-inp" placeholder="搜索物料 / PO号">
+      <select class="f-sel"><option>ABC 全部</option><option>A 类</option><option>B 类</option><option>C 类</option></select>
+      <select class="f-sel"><option>状态 全部</option><option>待推荐</option><option>已落位</option><option>已驳回</option></select>
+      <select class="f-sel"><option>物料 全部</option><option>PET500</option><option>PET600</option><option>辅材</option></select>
+      <select class="f-sel"><option>箱数 全部</option><option>≤40</option><option>41-60</option><option>≥61</option></select>
+      <select class="f-sel"><option>排序·导入序</option><option>箱数 ↓</option><option>ABC 优先</option></select>
+      <button class="btn ghost" style="height:30px;padding:0 12px;">重置</button>
+    </div>
+
+    <div class="batchbar">
+      <label class="ck"><input type="checkbox" checked> 全选（筛选结果）</label>
+      <span class="qcount2">已选 <b>3</b> / 筛选 <b>4</b> 单</span>
+      <span class="sp"></span>
+      <button class="btn soft">批量分配</button>
+      <button class="btn warn">批量接受并落位 ▶</button>
+      <button class="btn ghost">导出清单</button>
+    </div>
+
+    <div class="wb">
+      <!-- 左：生产订单队列 -->
+      <div class="col">
+        <div class="ct"><span>生产订单队列（多选）</span><span class="pill">4 单</span></div>
+        <div class="ord ck sel">
+          <label class="ckb"><input type="checkbox" checked></label>
+          <div class="od">
+            <div class="onum">PO-3573743144K55G</div>
+            <div class="mc">MAT-50001</div>
+            <div class="t">PET500 茉莉柚茶</div>
+            <div class="m"><span>60 箱</span><span><b style="color:var(--amber)">A</b></span></div>
+            <div class="st"><span class="pill">待推荐</span></div>
+          </div>
+        </div>
+        <div class="ord ck sel">
+          <label class="ckb"><input type="checkbox" checked></label>
+          <div class="od">
+            <div class="onum">PO-3573743144K55H</div>
+            <div class="mc">MAT-50002</div>
+            <div class="t">PET500 蜂蜜绿茶</div>
+            <div class="m"><span>50 箱</span><span><b style="color:var(--amber)">A</b></span></div>
+            <div class="st"><span class="pill">待推荐</span></div>
+          </div>
+        </div>
+        <div class="ord ck">
+          <label class="ckb"><input type="checkbox"></label>
+          <div class="od">
+            <div class="onum">PO-3573743144K60</div>
+            <div class="mc">MAT-60001</div>
+            <div class="t">PET600 矿泉水</div>
+            <div class="m"><span>40 箱</span><span><b style="color:var(--amber)">A</b></span></div>
+            <div class="st"><span class="pill ok">已落位</span></div>
+          </div>
+        </div>
+        <div class="ord ck sel">
+          <label class="ckb"><input type="checkbox" checked></label>
+          <div class="od">
+            <div class="onum">PO-9X0001</div>
+            <div class="mc">MAT-90001</div>
+            <div class="t">包装辅材</div>
+            <div class="m"><span>80 箱</span><span><b style="color:var(--muted)">C</b></span></div>
+            <div class="st"><span class="pill">待推荐</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 中：批量推荐方案表 -->
+      <div class="col">
+        <div class="ct"><span>批量推荐方案（已选 3 单）</span><span class="pill ok">全部达标</span></div>
+        <table class="btab">
+          <tr>
+            <th>PO</th><th>物料编码</th><th>物料</th><th>ABC</th>
+            <th>箱数</th><th>推荐巷道集</th><th>预测跨巷道</th><th>操作</th>
+          </tr>
+          <tr>
+            <td><b>K55G</b></td><td>MAT-50001</td><td>茉莉柚茶</td><td>A</td><td>60</td>
+            <td><span class="pill ok">{01, 05}</span></td><td>2</td>
+            <td><span class="mini">接受</span><span class="mini ghost" data-reason="r1">微调</span><span class="mini soft">驳回</span></td>
+          </tr>
+          <tr>
+            <td><b>K55H</b></td><td>MAT-50002</td><td>蜂蜜绿茶</td><td>A</td><td>50</td>
+            <td><span class="pill ok">{03, 07}</span></td><td>2</td>
+            <td><span class="mini">接受</span><span class="mini ghost" data-reason="r2">微调</span><span class="mini soft">驳回</span></td>
+          </tr>
+          <tr>
+            <td><b>9X0001</b></td><td>MAT-90001</td><td>包装辅材</td><td>C</td><td>80</td>
+            <td><span class="pill ok">{12, 18}</span></td><td>2</td>
+            <td><span class="mini">接受</span><span class="mini ghost" data-reason="r3">微调</span><span class="mini soft">驳回</span></td>
+          </tr>
+        </table>
+        <div class="note">逐单"微调"下钻推荐理由卡（蓝虚线）；"驳回"移出本次批量；默认沿用系统推荐即"接受"。</div>
+        <div class="batchfoot">
+          <span>预测平均跨巷道 <b>2.0</b></span>
+          <span>达标率 <b style="color:var(--green)">100%</b></span>
+          <span class="pill ok">全部达标 ✓</span>
+          <button class="btn warn">批量执行落位（写【入库台账】）</button>
+        </div>
+      </div>
+
+      <!-- 右：推荐理由下钻（22 号 §三 复用组件 .reason） -->
+      <div class="col">
+        <div class="ct"><span>推荐理由（下钻）</span><span class="pill">6 因子</span></div>
+        <div class="reason" id="r1">
+          <div class="rt">推荐巷道集 {01, 05} 的依据</div>
+          <div class="rl"><b>ABC 等级</b><span>A 类爆款 → 优先近站台巷道</span></div>
+          <div class="rl"><b>巷道 cap</b><span>01 剩 20 板 · 05 剩 35 板 · 充足</span></div>
+          <div class="rl"><b>既有库位</b><span>MAT-50001 已在 01/05 → 同巷道收拢</span></div>
+          <div class="rl"><b>站台就近</b><span>01/05 就近 A 站台（权重 0.9）</span></div>
+          <div class="rl"><b>批次</b><span>GJP2571221 同批已落 01 → 集中</span></div>
+          <div class="rl"><b>连续性</b><span>01-05 编码相邻 → 叉车动线短</span></div>
+        </div>
+        <div class="reason hidden" id="r2">
+          <div class="rt">推荐巷道集 {03, 07} 的依据</div>
+          <div class="rl"><b>ABC 等级</b><span>A 类 → 近站台</span></div>
+          <div class="rl"><b>巷道 cap</b><span>03 剩 28 · 07 剩 33 板</span></div>
+          <div class="rl"><b>既有库位</b><span>MAT-50002 已在 03/07</span></div>
+          <div class="rl"><b>站台就近</b><span>03/07 近 A 站台</span></div>
+          <div class="rl dim"><b>批次</b><span>新批次，沿用既有分布</span></div>
+          <div class="rl"><b>连续性</b><span>03-07 相邻</span></div>
+        </div>
+        <div class="reason hidden" id="r3">
+          <div class="rt">推荐巷道集 {12, 18} 的依据</div>
+          <div class="rl dim"><b>ABC 等级</b><span>C 类辅材 → 远站台</span></div>
+          <div class="rl"><b>巷道 cap</b><span>12 剩 60 · 18 剩 70 板 · 充裕</span></div>
+          <div class="rl"><b>既有库位</b><span>MAT-90001 已在 12/18</span></div>
+          <div class="rl dim"><b>站台就近</b><span>远站台，权重低</span></div>
+          <div class="rl"><b>批次</b><span>沿用既有</span></div>
+          <div class="rl"><b>连续性</b><span>12-18 相邻</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="postbar">
+      <span>后验：本次批量落位</span>
+      <span class="big" style="color:var(--green)">3</span>
+      <span>张生产订单</span>
+      <span class="pill ok">达标 ✓</span>
+      <span style="color:var(--muted);font-size:12px;">已写入【入库台账】· PO <b style="color:var(--ink)">K55G / K55H / 9X0001</b>（茉莉柚茶 / 蜂蜜绿茶 / 包装辅材）</span>
+    </div>
+
+    <div class="foot">③ 入库作业 · 按 21/22/24 号文档生成</div>
+  </main>
+</div>
+
+<a href="chat.html" class="dock" title="对话式操作台常驻浮窗">💬</a>
+<script src="assets/app.js"></script>
+</body>
+</html>
