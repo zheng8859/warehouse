@@ -57,7 +57,7 @@
               <div class="th">生产订单 (PO) <span class="pill ok">必填</span></div>
               <div class="line">文件名规则：<code>PO_*{yyyyMMdd}.xlsx</code></div>
               <div class="line">格式：Excel / CSV</div>
-              <div class="line">字段数：9 列（16 号 A）</div>
+              <div class="line">字段数：8 列（16 号 A）</div>
               <div class="line">关键列：料号·品名·箱数·期望入库时间</div>
               <div class="line">⚠ PO 不含批号（批号过账时生成）</div>
               <div class="line">→ 驱动「入库作业」待推荐队列</div>
@@ -66,7 +66,7 @@
               <div class="th">交货单 (DO) <span class="pill ok">必填</span></div>
               <div class="line">文件名规则：<code>DO_*{yyyyMMdd}.xlsx</code></div>
               <div class="line">格式：Excel / CSV</div>
-              <div class="line">字段数：9 列（16 号 A）</div>
+              <div class="line">字段数：8 列（16 号 A）</div>
               <div class="line">关键列：料号·出库量·交期</div>
               <div class="line">用途：以出定入（因子4 调权）</div>
               <div class="line">→ 驱动「出库作业」拣配任务</div>
@@ -77,7 +77,7 @@
               <div class="line">格式：Excel / CSV</div>
               <div class="line">字段数：8 列（16 号 A）</div>
               <div class="line">关键列：库位·料号·批号·数量</div>
-              <div class="line">时点：每日早8点反馈前日24点</div>
+              <div class="line">时点：期初一次性导入（建基线；后期不周期回读）</div>
               <div class="line">→ 建立 cap 基线</div>
             </div>
             <div class="t">
@@ -109,18 +109,18 @@
       <!-- 7.2 cap 口径 -->
       <div id="c2" class="hidden">
         <div class="sec-head"><h2>② cap 口径</h2><span class="sec-tag">P0-F9 巷道容量自维护</span></div>
-        <p class="sec-sub">定义每条巷道的"剩余可放板数"怎么算、怎么随事务增量维护。cap 由快照建基线，随入库/出库/移库事务增量更新，是评分引擎的可竞价资源。</p>
+        <p class="sec-sub">定义每条巷道的"剩余可放板数"怎么算、怎么随事务增量维护。cap 由期初库存快照建基线（仅期初一次），随入库/出库/移库事务增量更新，是评分引擎的可竞价资源。</p>
 
         <div class="card">
           <h3>cap 计算公式</h3>
           <div class="row">
-            <div class="field"><label>巷道总格数来源</label>
-              <select><option>库存快照·库位总数聚合</option><option>静态主数据</option></select></div>
+            <div class="field"><label>巷道总格数来源（cap_physical）</label>
+              <select><option>巷道主数据（推荐）</option><option>库存快照推导（主数据到位前近似）</option></select></div>
             <div class="field"><label>已占格数计算时点</label>
               <select><option>基于数据时点快照</option></select></div>
           </div>
           <div style="font-size:13px;background:#fbfdff;border:1px solid var(--line);border-radius:7px;padding:11px 13px;">
-            <code>cap[巷道] = 巷道总格数 − 已占格数</code>
+            <code>cap_total[巷道] = cap_physical − 已占格数</code>
             <span class="pill" style="margin-left:8px;">按库位号前2位切片聚合</span>
           </div>
           <div class="field" style="margin-top:11px;">
@@ -185,13 +185,13 @@
       <!-- 7.4 近站台预留比例 -->
       <div id="c4" class="hidden">
         <div class="sec-head"><h2>④ 近站台预留比例</h2><span class="sec-tag">F3 批量分配子能力</span></div>
-        <p class="sec-sub">为 A 类爆款在近站台巷道预留稀缺黄金库容；非 A 类不得占用预留池；超时未用自动释放，避免空置。对应 PRD 13.1 决策 + 03 §3.3。</p>
+        <p class="sec-sub">为 A 类爆款在近站台巷道预留稀缺黄金库容；非 A 类不得占用预留带；超时未用自动释放，避免空置。对应 PRD 13.1 决策 + 03 §3.3。</p>
 
         <div class="card">
           <h3>预留参数</h3>
           <div class="cf-slider"><span class="name">A 类预留比例</span><input type="range" min="0" max="80" value="40"><span class="val">40%</span></div>
           <div class="cf-slider"><span class="name">超时释放时点</span><input type="range" min="12" max="22" value="18"><span class="val">18:00</span></div>
-          <div class="cf-toggle"><div class="cf-switch" id="reserveSwitch"></div> 非 A 类订单不得占用预留池（强制）</div>
+          <div class="cf-toggle"><div class="cf-switch" id="reserveSwitch"></div> 非 A 类订单不得占用预留带（强制）</div>
         </div>
 
         <div class="card">
@@ -216,15 +216,17 @@
             <div class="u" style="width:60%"></div>
           </div>
           <div class="cf-legend">
-            <span class="lr">预留池（A 类专用）40%</span>
-            <span class="lu">可用池（全体可用）60%</span>
+            <span class="lr">预留带（A 类专用）40%</span>
+            <span class="lu">可用（非 A 类上限）60%</span>
           </div>
           <div style="margin-top:10px;font-size:12.5px;color:var(--muted);line-height:1.7;">
-            <code>cap_reserved = cap_total × 近站台预留比例</code>（仅近站台巷道）<br>
-            <code>cap_usable = cap_total − cap_reserved</code>（非 A 类仅能用此部分）<br>
-            A 类可用 <code>cap_total</code>；超时（如 18:00）未用完自动释放给 B/C 类。
+            <code>cap_physical = 巷道物理总格数</code>（固定容量，来自巷道主数据）<br>
+            <code>cap_total = cap_physical − 已占格数</code>（当前剩余可用）<br>
+            <code>cap_reserved = cap_physical × 近站台预留比例</code>（<b>固定预留带</b>；仅近站台巷道，默认 40%）<br>
+            <code>cap_usable = max(cap_total − cap_reserved, 0)</code>（非 A 类可用；B/C 类受物理总格 60% 上限）<br>
+            A 类可用 <code>cap_total</code>（含预留带）；超时（如 18:00）未用完自动释放给 B/C 类。
           </div>
-          <div class="note">算例：同一批货，爆款在近站台占比从逐单模式的 0% 提升到批量分配的 67%。预留比例默认值建议 40%（开放问题，待仓储主管+管理员确认）。</div>
+          <div class="note">算例：同一批货，爆款在近站台占比从逐单模式的 0% 提升到批量分配的 67%。预留比例默认 40%（基于物理总格数的<b>固定预留带</b>，已定；配置页可调）。</div>
         </div>
       </div>
 
@@ -250,14 +252,13 @@
         </div>
 
         <div class="card">
-          <h3>意图识别分层（可渐进）</h3>
+          <h3>对话台层级与意图识别（可渐进）</h3>
           <table>
             <tr><th>层级</th><th>做法</th><th>是否需模型</th></tr>
-            <tr><td>L0 结构化入口</td><td>快捷指令按钮+表单</td><td>否（首期必做）</td></tr>
-            <tr><td>L2 外部 LLM NLU</td><td>外部 LLM 意图分类（按 12.5 脱敏）</td><td>是·外部（可选增强）</td></tr>
-            <tr><td>L3 自主规划 Agent</td><td>—</td><td>不做（违反 12.1）</td></tr>
+            <tr><td>L0 按钮入口</td><td>快捷指令按钮 + 表单（data-goto 直达作业页）</td><td>否（首期必做）</td></tr>
+            <tr><td>L2 外部 LLM 问句</td><td>调用外部 LLM 做意图分类与分析建议（按 12.5 脱敏）</td><td>是·外部（可选增强）</td></tr>
           </table>
-          <div class="note">三类作业走 L0 按钮直达；KPI 指标查询由看板直呈并可下钻（不设固定语句模板，避免重复维护）；需要 LLM 分析的复杂问句走 L2 外部 LLM（统一外部调用，不考虑本地部署）。写操作一律确认卡→人工确认→调用对应作业页流程，对话台不产生第二套逻辑。</div>
+          <div class="note">术语统一：对话台仅 <b>L0 / L2</b> 两层；本文出现的 <b>L1</b> 一律指人工确认层（决策权在人，P0-F5），非意图分层；原"规则/模板匹配层"与"L3 自主规划 Agent"命名已废除。三类作业走 L0 按钮直达；KPI 指标查询由看板直呈并可下钻（不设固定语句模板，避免重复维护）；需要 LLM 分析的复杂问句走 L2 外部 LLM（统一外部调用，不考虑本地部署）。写操作一律确认卡→人工确认→调用对应作业页流程，对话台不产生第二套逻辑。</div>
         </div>
 
         <div class="card">
