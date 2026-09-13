@@ -33,6 +33,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
+from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -61,6 +62,7 @@ __all__ = [
     "FileSummary",
     "SessionValidation",
     "SourceFile",
+    "parse_source",
     "return_to_draft",
     "run_validation",
     "serialize_receipt",
@@ -137,11 +139,24 @@ def validate_files(
     )
 
 
+def parse_source(source: SourceFile) -> tuple[list[dict[str, Any]], MappingResult]:
+    """一份文件的流水线前半段：探测 → 解析 → 映射。纯函数。
+
+    探测失败（格式 / 编码不可识别）抛 `ValidationBlocked` —— 处置（阻断成回执还是上抛）
+    由调用方决定：`_validate_one` 把它落成该文件的回执条目，`execute_import` 把它当成
+    「执行失败」回退。校验与执行都要重跑这段，抽出来避免两处各自漂移。
+    """
+    detected = detect(source.filename, source.content)
+    rows = parse_rows(source.content, detected)
+    headers = list(rows[0].keys()) if rows else []
+    mapping = build_mapping(headers, source.file_type)
+    return rows, mapping
+
+
 def _validate_one(source: SourceFile, *, warehouse_id: str) -> tuple[FileSummary, list[ValidationIssue]]:
     """一份文件的流水线：探测 → 解析 → 映射 → 校验。探测失败也算该文件失败。"""
     try:
-        detected = detect(source.filename, source.content)
-        rows = parse_rows(source.content, detected)
+        rows, mapping = parse_source(source)
     except ValidationBlocked as exc:
         issue = ValidationIssue(
             level=IssueLevel.BLOCKING,
@@ -160,9 +175,6 @@ def _validate_one(source: SourceFile, *, warehouse_id: str) -> tuple[FileSummary
             passed=False,
         )
         return summary, [issue]
-
-    headers = list(rows[0].keys()) if rows else []
-    mapping = build_mapping(headers, source.file_type)
 
     file_issues = (
         validate_structure(rows, filename=source.filename)
