@@ -188,11 +188,11 @@ WAL 下多读单写。应用**必须单进程运行**，**不得加 `--workers`*
 
 | 版本 | 阶段 | 内容 |
 |:--:|---|---|
-| v0.1.0 | 一（文档25） | 环境搭建 + 项目骨架 ← **当前** |
+| v0.1.0 | 一（文档25） | 环境搭建 + 项目骨架 |
 | v0.2.0 | 二（26 · 设计17+13） | 23 个模型 + JWT + 权限矩阵 |
 | v0.3.0 | 三（27 · 设计14） | 6 因子引擎 + 批量分配 + 降级链 |
 | v0.4.0 | 四（28 · 设计15+16） | 三类作业管线 + 文件导入 + cap 自维护 |
-| v0.5.0 | 五（29 · 设计10） | 冷路径 LLM（脱敏 + 审批） |
+| v0.5.0 | 五（29 · 设计10） | 冷路径 LLM（脱敏 + 审批） ← **当前** |
 | v0.6.0 | 六（30 · 设计18+20） | Golden 数据集 + Evals + Go/No-Go |
 | v0.7.0 | 七（31 · 设计22+21） | 8 页 Vanilla + 对话台 + 设计令牌 |
 | v1.0.0-rc.1 | 八（32） | 全链路验收 + 安全审计 |
@@ -291,10 +291,10 @@ Go/No-Go 闸门：集中度达成率 ≥70% 且趋势向好 + 护栏全过 → G
 
 ---
 
-## 十一、当前状态与待办（阶段四）
+## 十一、当前状态与待办（阶段五）
 
-**阶段一、二、三已收尾并打标（`v0.1.0` / `v0.2.0` / `v0.3.0`），阶段七（前端基础层，`v0.7.0`）
-已先行收尾。阶段四接下来（`28` · 设计 `15`+`16`）：三类作业管线 + 文件导入 + cap 自维护。**
+**阶段一、二、三、四已收尾并打标（`v0.1.0` / `v0.2.0` / `v0.3.0` / `v0.4.0`），阶段七（前端基础层，`v0.7.0`）
+已先行收尾。阶段五接下来（`29` · 设计 `10`）：冷路径 LLM（脱敏 + 审批）。**
 
 **阶段一（`v0.1.0`）**：`openspec/` 已初始化且 `config.yaml` 已填 · `backend/` 骨架 · 本文件 ·
 `CONTEXT.md` · `git init`（`main` 分支，origin = 本地裸仓库 `D:\成品库位智能推荐\warehouse-origin.git`）·
@@ -345,12 +345,24 @@ JWT（HS256）认证 + 权限矩阵骨架（`13` §2.2 的逐条搬运）· 乐�
 变更 `frontend-foundation` 已归档（2026-09-13），主规格 `openspec/specs/frontend-foundation/spec.md`
 已由 delta 写入。**已合并（`cfd283a`）、已打 `v0.7.0`。**
 
+**阶段四（`28` · 设计 `15`+`16` · 已收尾 `v0.4.0`）**：两个变更 ——
+`transaction-base`（三类作业管线与台账：`app/services/` inbound / outbound / relocate / verify / ledger
++ `JobOrder` 状态机守卫 + 乐观锁 + 台账与 cap 同事务写入）与
+`data-import`（数据衔接层：`app/importer/` 管线（探测 / 解析 / 映射 / 四层校验 / 会话编排 / 执行分流 / 去重 / ABC）
++ `app/cap/baseline.py` 基线全量重算 + `AisleCap.cap_physical` 新增列
++ `/api/import/*` 六端点 + `/api/snapshot/current` + `/api/cap` / `/api/cap/recompute`
++ `data-import.html` p2 数据层接线 + `scripts/import_abc.py`）。
+cap 预留口径修正为 `cap_reserved = cap_physical × 40%`（仅近站台，非旧式 `cap_total × 40%`；
+`openspec/config.yaml` context 已同步）。主规格 `transaction-base`（7 条）、`data-import`（9 条）新建，
+`data-model` 增 `ImportSession` 状态机（8 态 / 10 迁移）。**1166 passed**（全量）。
+两变更均已归档（2026-09-13 / 2026-09-14）并合并 —— `transaction-base` `17b0bf4`、
+`data-import` `1b60df8`，**已打 `v0.4.0`。**
+
 **未完成**：
 
 - `backend/evals/run_evals.py` —— 阶段六实现；现在跑刻意以退出码 3 失败
-- 四类文件导入管线与 cap 自维护（`app/importer/` / `app/cap/`）—— 阶段四
-- 三类作业管线与台账（`app/services/`）—— 阶段四
-- 冷路径 LLM（`app/llm/`）、KPI 看板 —— 阶段五 / 六
+- 冷路径 LLM（`app/llm/`）—— 阶段五
+- KPI 看板 —— 阶段六
 
 ### pre-commit 钩子：装之前先读这条
 
