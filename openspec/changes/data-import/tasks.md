@@ -25,7 +25,7 @@
 ## 4. cap 基线全量重算与 cap_physical
 
 - [x] 4.1 `AisleCap` 新增 `cap_physical` 列（迁移，`batch_alter_table`），并修正 `linkage.py` 模块 docstring 与 `cap_reserved` 列注释为 `cap_physical × 40%`；验证迁移可回放 + `pytest tests/models -q` 通过
-- [ ] 4.2 落地 `app/cap/baseline.py` 全量重算：按巷道 `[:2]` 聚合计算 `cap_physical/cap_total/cap_reserved/cap_usable`（`cap_reserved = cap_physical × 40%`，仅近站台巷道），生成新 `Snapshot` 版本、旧版归档；先写 `tests/logic/test_cap_baseline.py` 覆盖四项指标与版本归档、重算失败回滚，验证通过
+- [x] 4.2 落地 `app/cap/baseline.py` 全量重算：按巷道 `[:2]` 聚合计算 `cap_physical/cap_total/cap_reserved/cap_usable`（`cap_reserved = cap_physical × 40%`，仅近站台巷道），生成新 `Snapshot` 版本、旧版归档；先写 `tests/logic/test_cap_baseline.py` 覆盖四项指标与版本归档、重算失败回滚，验证通过
 - [ ] 4.3 修正 `openspec/config.yaml` context 里 `cap_reserved = cap_total × 40%` 旧公式为 `cap_physical × 40%`；验证 `openspec validate` 退出 0
 
 ## 5. 成品清单 ABC 统计导入（脚本）
