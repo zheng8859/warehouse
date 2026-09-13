@@ -92,11 +92,12 @@ context: |
   库存快照 INV（→ cap 基线 + 既有库位/批次分布）、成品清单·历史出入库流水
   （统计类，→ ABC 分类与「以出定入」的出库量，不产生队列、不建基线）。
 
-  **cap 三指标**（`AisleCap`）：
+  **cap 四指标**（`AisleCap`）：
   ```
-  cap_total    = 巷道总格数 − 已占格数          （基线来自库存快照）
-  cap_reserved = cap_total × 近站台预留比例      （默认 40%，仅近站台巷道）
-  cap_usable   = cap_total − cap_reserved       （非 A 类可用）
+  cap_physical = 巷道物理总格数                   （主数据到位前 = 快照库位去重格数近似）
+  cap_total    = cap_physical − 已占格数          （基线来自库存快照）
+  cap_reserved = cap_physical × 近站台预留比例     （默认 40%，仅近站台巷道）
+  cap_usable   = cap_total − cap_reserved         （非 A 类可用，≥0）
   ```
   每次快照导入（`IMPORTED → BASELINE`）触发按巷道**全量重算**，生成新版本、旧版归档；
   作业导致的增减为**事务内增量**，与台账同事务写入。**快照是权威，增量是过程**，
