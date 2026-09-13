@@ -18,7 +18,7 @@
 - 台账由引擎与作业流自动写，不向任何角色开放手动入口（15 §4.3 表注 / `13` 矩阵）
 - 偏离批次是**移库作业的任务来源**，移库后偏离状态推进（15 §7.2）—— 治理回路的闭环
 
-## 本模块的十一处取舍（文档没直说或两处口径不齐，评审要看的就是这些）
+## 本模块的十二处取舍（文档没直说或两处口径不齐，评审要看的就是这些）
 
 1. **17 §4.1 的「推荐侧 / 后验侧 / 降级标记」不在 `job_orders` 上**。§4.1 是按聚合根
    罗列的属性分组，§4.2 / §4.4 才把它们各自定义成实体（`RecommendationPlan` /
@@ -46,10 +46,10 @@
    CHECK。故两列是 JSON 同名字段的**投影**：写入方只有一个（阶段三的评分引擎），
    两者不一致属写入侧 bug —— 测试里两处都钉住。
    CHECK 只钉一个方向（降级 ⇒ 必有原因），理由见 `_DEGRADE_CHECK` 的注释。
-7. **台账的唯一键落在 `job_order_id`**，不是（`ledger_type`, `order_no`）。一张 PO 有多行
-   （16 附录A 的行唯一键 = 单据号码 + 行号），而台账按 15 附录A **不记行号** ——
-   用（类型, 单号）做键会让多行单据的第二行写不进去，把「防重复」变成「防多行」，
-   而红线要防的是「同一作业单重复写台账」（15 §11.7）。
+7. **台账的唯一键落在 `job_order_id`**（冲正后放宽为 `(job_order_id, is_reversal)`，见第 12 条），
+   不是（`ledger_type`, `order_no`）。一张 PO 有多行（16 附录A 的行唯一键 = 单据号码 + 行号），
+   而台账按 15 附录A **不记行号** —— 用（类型, 单号）做键会让多行单据的第二行写不进去，
+   把「防重复」变成「防多行」，而红线要防的是「同一作业单重复写台账」（15 §11.7）。
 8. **台账不存后验结论**。15 附录A 的矩阵里给了「后验结果」一行，但 17 §4.3 的台账字段
    矩阵**没有这一行**，而 17 是实体字段的单一事实来源（附录A 自己也是这么写的）。
    还有一条时序理由：15 §6.3 的顺序是「台账写入成功后自动触发后验」—— 写台账那一刻
@@ -70,6 +70,13 @@
     故 §4 先落整数列，**§5 落地 `accounts` 后由迁移 `0559bebb5207` 用
     `batch_alter_table` 补上两条外键**（SQLite 改约束只能 batch 重建）—— 与 §3 的
     `cap_alerts.ledger_txn_id` 同一处理。tasks.md 9.4d① 已据此销账。
+12. **`is_reversal` 反向行**：冲正（design.md D3 / 用户定稿「整单冲掉，状态置 VOID，
+    不创建反向单」）写一条 `is_reversal=True` 的反向台账行，与正常行同存一张表、
+    同走「台账是 cap 与库存分布增量的唯一来源」。唯一键于是从
+    `uq_ledgers_job_order_id(job_order_id)` 放宽为
+    `uq_ledgers_job_order_id_reversal(job_order_id, is_reversal)` —— 一单至多一正常行 +
+    一反向行。「至多一反向行」靠状态机兜底：`VOID` 是终态，冲正至多一次；不另设
+    `voided_at`（与第 8 条「不为一时刻立两列」同一理由）。
 """
 from __future__ import annotations
 
@@ -275,7 +282,8 @@ class Ledger(BaseEntity):
     __table_args__ = (
         # 「EXECUTED 后不允许重复写台账」（15 §11.7）的结构层兜底：
         # 网络重试、并发确认、绕过状态机的手工写入，撞到的都是这条。理由见 docstring 第 7 条。
-        sa.UniqueConstraint("job_order_id", name="uq_ledgers_job_order_id"),
+        # 冲正后放宽为 (job_order_id, is_reversal)：一单至多一正常行 + 一反向行（docstring 第 12 条）。
+        sa.UniqueConstraint("job_order_id", "is_reversal", name="uq_ledgers_job_order_id_reversal"),
         sa.CheckConstraint(_DEGRADE_CHECK, name="degrade_reason_required"),
         sa.CheckConstraint(_LEDGER_LOCATION_CHECK, name="location_columns_by_type"),
         sa.CheckConstraint(
@@ -292,6 +300,10 @@ class Ledger(BaseEntity):
     )
 
     job_order_id: Mapped[int] = mapped_column(sa.ForeignKey("job_orders.id"), nullable=False)
+
+    #: 冲正反向行标记（design.md D3）。False = 正常台账行，True = 冲正反向行。
+    #: 与 `job_order_id` 一起构成唯一键 —— 见 docstring 第 12 条。
+    is_reversal: Mapped[bool] = mapped_column(nullable=False, default=False)
 
     #: 台账类型，取值域复用 `job_type`（17 §九⑤）。
     ledger_type: Mapped[LedgerType] = enum_column(LedgerType, name="ledger_type", nullable=False)

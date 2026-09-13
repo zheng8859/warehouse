@@ -11,12 +11,12 @@
 
 ## 1. 状态机与枚举（前置）
 
-- [ ] 1.1 `app/core/enums.py` 的 `JobStatus` 增 `VERIFYING` / `VERIFY_FAILED` / `VOID`，并新增 Alembic 迁移用 `batch_alter_table` 将 `job_orders.job_status` 的 CHECK 由 7 值重建为 10 值。验证：`pytest tests/models -k enum` 枚举完整性 + `alembic upgrade head` / `downgrade -1` 往返通过。
-- [ ] 1.2 `app/core/state_machine.py` 扩展 `LEGAL_TRANSITIONS`（`EXECUTED→{VERIFYING,VOID}`、`VERIFIED→{VOID}`、新增 `VERIFYING→{VERIFIED,VERIFY_FAILED}`、`VERIFY_FAILED→{VERIFYING}`、`VOID→{}`），`TERMINAL_STATUSES` 随之变 `{CANCELLED, VOID}`。验证：`tests/logic/test_job_state.py` 新增边全通过、未定义边（如 `VERIFY_FAILED→VOID`、`VERIFYING→VOID`）被拒（场景：未定义迁移被拒绝 / 冲正置 VOID / 后验拆为两段）。
+- [x] 1.1 `app/core/enums.py` 的 `JobStatus` 增 `VERIFYING` / `VERIFY_FAILED` / `VOID`，并新增 Alembic 迁移用 `batch_alter_table` 将 `job_orders.job_status` 的 CHECK 由 7 值重建为 10 值。验证：`pytest tests/models -k enum` 枚举完整性 + `alembic upgrade head` / `downgrade -1` 往返通过。
+- [x] 1.2 `app/core/state_machine.py` 扩展 `LEGAL_TRANSITIONS`（`EXECUTED→{VERIFYING,VOID}`、`VERIFIED→{VOID}`、新增 `VERIFYING→{VERIFIED,VERIFY_FAILED}`、`VERIFY_FAILED→{VERIFYING}`、`VOID→{}`），`TERMINAL_STATUSES` 随之变 `{CANCELLED, VOID}`。验证：`tests/logic/test_job_state.py` 新增边全通过、未定义边（如 `VERIFY_FAILED→VOID`、`VERIFYING→VOID`）被拒（场景：未定义迁移被拒绝 / 冲正置 VOID / 后验拆为两段）。
 
 ## 2. 台账反向行 schema（冲正前置）
 
-- [ ] 2.1 `app/models/job.py` 的 `Ledger` 增 `is_reversal: bool = False`，唯一约束 `uq_ledgers_job_order_id(job_order_id)` 放宽为 `uq_ledgers_job_order_id_reversal(job_order_id, is_reversal)`（迁移 + 模型同步）。验证：`tests/models/test_job.py` 约束断言 —— 一单至多一正常行 + 一反向行；第二条正常行被拒，一正常 + 一反向可共存。
+- [x] 2.1 `app/models/job.py` 的 `Ledger` 增 `is_reversal: bool = False`，唯一约束 `uq_ledgers_job_order_id(job_order_id)` 放宽为 `uq_ledgers_job_order_id_reversal(job_order_id, is_reversal)`（迁移 + 模型同步）。验证：`tests/models/test_job.py` 约束断言 —— 一单至多一正常行 + 一反向行；第二条正常行被拒，一正常 + 一反向可共存。
 
 ## 3. 台账写入与 cap 增量（F7 + F9 增量）
 

@@ -1,8 +1,9 @@
 """作业单状态机（**纯函数，无 IO**）。
 
 事实来源：15-入库出库移库与后验流程设计 §3.1（状态机图）、§3.2（三类状态详解）、§11.7（幂等）
-          17-数据模型设计 §4.1（状态字段）、§九②（`job_status` 七值）
+          17-数据模型设计 §4.1（状态字段）、§九②（`job_status` 十值）
           openspec/changes/data-model-permission/specs/data-model/spec.md「JobOrder 状态机」
+          openspec/changes/transaction-base/specs/data-model/spec.md「JobOrder 状态机」（10 态）
 
 ## 为什么单独成一个模块，而不是长在 `JobOrder` 上
 
@@ -21,11 +22,16 @@
 1. **自环是特例**：只有 `PENDING → PENDING` 允许（15 §3.1「批量分配失败可重试」）。
    其余状态的自环一律不合法 —— 尤其 `EXECUTED → EXECUTED`，15 §11.7 要求网络重试
    撞上已执行的单子时**返回既有台账**，而不是再走一次迁移（那会写出第二条台账）。
-2. **两个终态**：`CANCELLED`（移出本次批量）与 `VERIFIED`（后验完成）没有出边。
+2. **两个终态**：`CANCELLED`（移出本次批量）与 `VOID`（冲正完成）没有出边。
    注意 `CANCELLED` 不是「可恢复的暂停」：要重新纳入，是一次新的入队，不是状态机上的回边。
+   `VERIFIED` **不再是终态**：它可被冲正拉回 `VOID`，故终态集由 `TERMINAL_STATUSES` 推导时
+   自然从 `{CANCELLED, VERIFIED}` 变为 `{CANCELLED, VOID}`。
 3. **`CONFIRMED → PLANNED` 是回边，`EXECUTED → PLANNED` 不是**：前者对应「写台账失败/回滚」
    （15 §3.1，事务整体回滚后单子回到已出方案），后者会造出「台账已存在、单子却回到待确认」
    的状态 —— 台账只有一套，这一步退不得。
+4. **后验拆成两段**：`EXECUTED → VERIFYING → VERIFIED / VERIFY_FAILED`，且 `VERIFY_FAILED →
+   VERIFYING` 是唯一重试边（无「放弃后验」终态）。`VERIFYING` 是内部中间态，确认请求内一次
+   走完，不对外停留。
 """
 from __future__ import annotations
 
@@ -44,7 +50,7 @@ __all__ = [
     "can_transition",
 ]
 
-#: 当前状态 → 允许迁移到的状态集。内容即 15 §3.1 的图，10 条边。
+#: 当前状态 → 允许迁移到的状态集。内容即 15 §3.1 的图，15 条边。
 #: 外层 `MappingProxyType` + 内层 `frozenset` 都是**只读**：这张表是判定基准，
 #: 任何一处的「临时放宽」都必须改到本文件，而不是在调用点改一个副本。
 LEGAL_TRANSITIONS: Final[Mapping[JobStatus, frozenset[JobStatus]]] = MappingProxyType(
@@ -70,9 +76,22 @@ LEGAL_TRANSITIONS: Final[Mapping[JobStatus, frozenset[JobStatus]]] = MappingProx
             }
         ),
         JobStatus.REJECTED: frozenset({JobStatus.PENDING}),   # 重新入队（可再次分配）
-        JobStatus.EXECUTED: frozenset({JobStatus.VERIFIED}),   # 后验完成
+        JobStatus.EXECUTED: frozenset(
+            {
+                JobStatus.VERIFYING,    # 台账写入成功后自动触发后验
+                JobStatus.VOID,         # 冲正
+            }
+        ),
+        JobStatus.VERIFYING: frozenset(
+            {
+                JobStatus.VERIFIED,     # 后验完成（达标/偏离由 Verification 标记）
+                JobStatus.VERIFY_FAILED,  # 后验失败/超时
+            }
+        ),
+        JobStatus.VERIFY_FAILED: frozenset({JobStatus.VERIFYING}),  # 重试后验（无放弃终态）
         JobStatus.CANCELLED: frozenset(),                      # 终态
-        JobStatus.VERIFIED: frozenset(),                       # 终态
+        JobStatus.VERIFIED: frozenset({JobStatus.VOID}),       # 冲正（不再是终态）
+        JobStatus.VOID: frozenset(),                           # 终态
     }
 )
 
