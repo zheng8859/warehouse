@@ -50,8 +50,8 @@ LEGAL_IMPORT_TRANSITIONS: Final[Mapping[ImportStatus, frozenset[ImportStatus]]] 
         ),
         ImportStatus.VALIDATING: frozenset(
             {
-                ImportStatus.VALIDATED,   # 校验全部通过
-                ImportStatus.FAILED,      # 字段未命中 / 口径异常 / 时点缺失
+                ImportStatus.VALIDATED,   # 时点有效且至少一类文件通过（部分失败隔离）
+                ImportStatus.FAILED,      # 时点缺失/未来 · 或全部文件失败
             }
         ),
         ImportStatus.VALIDATED: frozenset(

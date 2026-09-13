@@ -30,7 +30,7 @@
 """
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
@@ -63,6 +63,7 @@ __all__ = [
     "SessionValidation",
     "SourceFile",
     "parse_source",
+    "passed_filenames",
     "return_to_draft",
     "run_validation",
     "serialize_receipt",
@@ -101,7 +102,13 @@ class FileSummary:
 
 @dataclass(frozen=True)
 class SessionValidation:
-    """一批文件的校验结果：每文件一行摘要 + 一份完整回执（含会话级时点条目）。"""
+    """一批文件的校验结果：每文件一行摘要 + 一份完整回执（含会话级时点条目）。
+
+    `passed` 是「整批无任何阻断级异常」的旧口径（全绿）；`importable` 是「可执行导入」
+    的新口径（部分文件失败隔离：会话级通过且至少一份文件通过）。两者并存 —— 前者仍是
+    逐文件回执明细之外的总开关，后者决定「点执行导入」这一下能不能走（spec「部分文件
+    失败隔离」：某类失败不影响他类，但时点非法仍阻断一切）。
+    """
 
     files: tuple[FileSummary, ...]
     report: ValidationReport
@@ -109,6 +116,26 @@ class SessionValidation:
     @property
     def passed(self) -> bool:
         return self.report.passed
+
+    @property
+    def session_passed(self) -> bool:
+        """会话级通过：时点检查无阻断（没有任何 `SESSION_SCOPE` 的阻断级条目）。"""
+        return all(i.filename != SESSION_SCOPE for i in self.report.blocking)
+
+    @property
+    def passed_files(self) -> tuple[FileSummary, ...]:
+        """校验通过的文件（按传入顺序）。"""
+        return tuple(f for f in self.files if f.passed)
+
+    @property
+    def failed_files(self) -> tuple[FileSummary, ...]:
+        """校验失败的文件（按传入顺序）。"""
+        return tuple(f for f in self.files if not f.passed)
+
+    @property
+    def importable(self) -> bool:
+        """可执行导入：会话级通过 且 至少一份文件通过（部分文件失败隔离）。"""
+        return self.session_passed and bool(self.passed_files)
 
 
 def validate_files(
@@ -207,7 +234,9 @@ def serialize_receipt(session_no: str, data_time: datetime, validation: SessionV
     """把校验结果序列化成 `receipt_json`（17 §10.4 形状 + `issues` 可展开明细）。
 
     纯函数：只读 `SessionValidation`，不做 IO。`issues` 每条都带 `filename / column / row /
-    reason`，正是 spec「回执可展开到文件 + 列 + 行 + 原因」要的那份明细。
+    reason`，正是 spec「回执可展开到文件 + 列 + 行 + 原因」要的那份明细。`passed` 是
+    **可执行**信号（`importable`，部分失败不阻断），另附 `success_files` / `failed_files`
+    两个计数，即 spec「部分文件失败隔离」要的「成功 N 类 / 失败 M 类」。
     """
     return {
         "session_id": session_no,
@@ -234,8 +263,25 @@ def serialize_receipt(session_no: str, data_time: datetime, validation: SessionV
             }
             for i in validation.report.issues
         ],
-        "passed": validation.passed,
+        "passed": validation.importable,
+        "success_files": len(validation.passed_files),
+        "failed_files": len(validation.failed_files),
     }
+
+
+def passed_filenames(receipt: Mapping[str, Any] | None) -> frozenset[str]:
+    """从回执里提取「校验通过」的文件名集合（部分文件失败隔离的执行依据）。
+
+    回执缺 `files` 明细或整体为 `None`（直接以 `VALIDATED` 会话调用 execute、未经
+    `run_validation` 落回执）→ 返回空集。空集在 `execute._importable_files` 里的语义是
+    「没有逐文件结论，全部视为可导」，不是「一个都不导」—— 后者只在回执列了逐文件失败
+    时才成立（此时返回的非空集合自然只含通过的文件）。纯函数：只读回执、不做 IO。
+    """
+    if not receipt:
+        return frozenset()
+    return frozenset(
+        f["filename"] for f in receipt.get("files", ()) if f.get("status") == "PASSED"
+    )
 
 
 def run_validation(
@@ -250,7 +296,9 @@ def run_validation(
 
     - 入口要求 `DRAFT`（点「开始校验」）。`FAILED` 想重校验必须先 `return_to_draft` ——
       那是唯一的回边，本函数不提供 `FAILED → VALIDATING` 的捷径（16 §3.1）。
-    - 校验结论只看 `report.passed`（阻断级）；降级级只进回执、不翻转状态。
+    - 校验结论看 `validation.importable`（部分文件失败隔离）：会话级时点通过且至少一份
+      文件通过 → `VALIDATED`（失败的某类文件不阻断他类，执行时被隔离）；否则 `FAILED`。
+      降级级只进回执、不翻转状态。
     - `db.flush()` 让回执与状态**落库**（本事务内可读），**不 commit**（见模块 docstring）。
     """
     session_row.status = assert_import_transition(session_row.status, ImportStatus.VALIDATING)
@@ -259,7 +307,7 @@ def run_validation(
     validation = validate_files(files, data_time=session_row.data_time, warehouse_id=warehouse_id, now=now)
     session_row.receipt_json = serialize_receipt(session_row.session_no, session_row.data_time, validation)
 
-    target = ImportStatus.VALIDATED if validation.passed else ImportStatus.FAILED
+    target = ImportStatus.VALIDATED if validation.importable else ImportStatus.FAILED
     session_row.status = assert_import_transition(session_row.status, target)
     session_row.validated_at = utcnow()
 

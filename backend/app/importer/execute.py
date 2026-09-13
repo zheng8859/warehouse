@@ -48,7 +48,7 @@ from app.core.errors import DomainError
 from app.core.import_state import assert_import_transition
 from app.importer.loaders import as_location_code
 from app.importer.mapping import MappingResult
-from app.importer.session import SourceFile, parse_source
+from app.importer.session import SourceFile, parse_source, passed_filenames
 from app.importer.validate import WAREHOUSE_ID
 from app.models.base import utcnow
 from app.models.job import JobOrder
@@ -155,8 +155,11 @@ def execute_import(
     """`VALIDATED → IMPORTING → IMPORTED → [BASELINE]`，分流三类文件。
 
     - 入口要求 `VALIDATED`（点「执行导入」）。非法入口抛 `StateConflict`（try 之外）。
+    - **部分文件失败隔离**：只分流「校验通过」的文件（按 `receipt_json` 的逐文件结论），
+      失败的文件被隔离、不参与分流（spec「部分文件失败隔离」）。故 INV 校验失败时
+      PO/DO 照常载入、只是不建 cap 基线（无 INV → 停在 `IMPORTED`）。
     - PO/DO → JobOrder（`IMPORTING → IMPORTED`，savepoint 内）；INV → InventoryItem 并
-      触发 `establish_baseline`（`IMPORTED → BASELINE`）。无 INV 则停在 `IMPORTED`。
+      触发 `establish_baseline`（`IMPORTED → BASELINE`）。
     - 写入失败（唯一键冲突 / 业务校验）整体回滚该批，退回 `FAILED` —— 不产生半成品。
 
     返回**同一个** `session_row`（成功时 `BASELINE` 或 `IMPORTED`，失败时 `FAILED`），
@@ -166,9 +169,12 @@ def execute_import(
     session_row.status = assert_import_transition(session_row.status, ImportStatus.IMPORTING)
     db.flush()
 
+    # 只分流校验通过的文件（纯过滤，无 IO、不抛异常）。回执无逐文件结论时全部视为可导。
+    importable = _importable_files(files, session_row.receipt_json)
+
     try:
-        orders = _split_job_orders_from_files(files, warehouse_id=warehouse_id)
-        items = _split_inventory_from_files(files, warehouse_id=warehouse_id)
+        orders = _split_job_orders_from_files(importable, warehouse_id=warehouse_id)
+        items = _split_inventory_from_files(importable, warehouse_id=warehouse_id)
         with db.begin_nested():
             for order in orders:
                 db.add(order)
@@ -188,6 +194,22 @@ def execute_import(
     if items:
         establish_baseline(db, import_session=session_row, items=items)
     return session_row
+
+
+def _importable_files(
+    files: Sequence[SourceFile], receipt: Mapping[str, Any] | None
+) -> list[SourceFile]:
+    """只保留「校验通过」的文件（部分文件失败隔离）。
+
+    `receipt` 是会话的 `receipt_json`。它没有逐文件结论时（`None` 或没有 `files` 明细，
+    即直接以 `VALIDATED` 会话调用 execute、未经 `run_validation` 落回执）→ 全部视为可导
+    （向后兼容、也符合「调用方已断言这批都过」的直接调用语义）；有逐文件结论时只留
+    `status == "PASSED"` 的文件，失败的被隔离、不参与分流。
+    """
+    if not receipt or not receipt.get("files"):
+        return list(files)
+    passed = passed_filenames(receipt)
+    return [f for f in files if f.filename in passed]
 
 
 def _split_job_orders_from_files(
