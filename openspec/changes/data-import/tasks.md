@@ -36,7 +36,7 @@
 ## 6. API 路由与 p2 数据层
 
 - [x] 6.1 实现 `/api/import/*` 路由（session/upload/validate/result/execute/retry）与 `/api/snapshot/current`、`/api/cap/recompute`、`/api/cap`；先写 `tests/api/test_import_routes.py` 覆盖端点行为 + 认证 + 错误处理，验证通过
-- [ ] 6.2 `assets/app.js` 增加 fetch/API 封装 + `data-import.html` 接线（时点卡 + 三文件上传 + 校验结果表 + 开始校验/执行导入两步，`setState` 四态渲染），不接线成品清单/ABC；先写 `tests/frontend/test_data_import_data_layer.py` 静态断言，验证通过
+- [x] 6.2 `assets/app.js` 增加 fetch/API 封装 + `data-import.html` 接线（时点卡 + 三文件上传 + 校验结果表 + 开始校验/执行导入两步，`setState` 四态渲染），不接线成品清单/ABC；先写 `tests/frontend/test_data_import_data_layer.py` 静态断言，验证通过
 
 ## 7. 异常 / 边界与集成
 
