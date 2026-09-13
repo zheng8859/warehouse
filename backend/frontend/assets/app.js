@@ -139,3 +139,45 @@ function setState(el, state, opts) {
   }
 }
 window.setState = setState;
+
+/* ============================================================
+ * fetch/API 封装 + 文件→base64（16 号附录B + spec「数据导入页数据层」）
+ * 数据层原语：页面脚本只调 window.api，不各自拼 fetch。
+ * ============================================================ */
+
+// 通用 API 封装：Bearer 认证（13 §六）、JSON 编解码、非 2xx 抛错（带 status/body）。
+// 用法：const d = await window.api('/import/session', {method:'POST', body:{...}});
+async function api(path, options) {
+  options = options || {};
+  const opts = Object.assign({ headers: {} }, options);
+  const token = sessionStorage.getItem('token');
+  if (token) opts.headers['Authorization'] = 'Bearer ' + token;
+  if (opts.body && typeof opts.body === 'object') {
+    opts.headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(opts.body);
+  }
+  const resp = await fetch(path, opts);
+  const text = await resp.text();
+  let data = null;
+  if (text) { try { data = JSON.parse(text); } catch (e) { data = text; } }
+  if (!resp.ok) {
+    const err = new Error((data && data.message) || ('HTTP ' + resp.status));
+    err.status = resp.status;
+    err.body = data;
+    throw err;
+  }
+  return data;
+}
+window.api = api;
+
+// 文件 → base64（零构建上传走 JSON 而非 multipart，design.md D7）。
+// 返回不含 data: 前缀的纯 base64 串（对应 UploadRequest.content_base64）。
+function readFileAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(',')[1]);
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(file);
+  });
+}
+window.readFileAsBase64 = readFileAsBase64;

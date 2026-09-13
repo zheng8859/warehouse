@@ -34,12 +34,12 @@
 
   <main>
     <div class="sec-head"><h2>② 数据导入页</h2><span class="sec-tag">仓管员 / 管理员</span></div>
-    <p class="sec-sub">文件级数据衔接入口（见 16 号）。四类上传位：PO / DO / 库存快照 + 成品清单（统计类·低频）。数据时点必填（默认当天），导入即基准。</p>
+    <p class="sec-sub">文件级数据衔接入口（见 16 号）。三类上传位：PO / DO / 库存快照（成品清单 ABC 为脚本通道，不在此页）。数据时点必填（默认当天），导入即基准。</p>
 
     <div class="op-banner">
       <span class="tag">作业</span>
       <b>三类文件上传 + 数据时点标注（必填，默认当天） + 导入后校验；导入即基准</b>
-      <div class="sub">PO → 入库队列 · DO → 出库任务 · INV → cap 基线 · BI → ABC 聚合（不建基线）</div>
+      <div class="sub">PO → 入库队列 · DO → 出库任务 · INV → cap 基线</div>
     </div>
 
     <div class="card">
@@ -47,61 +47,48 @@
       <div class="row">
         <div class="field" style="flex:1;">
           <label>数据时点（推荐基于该时点快照）</label>
-          <input value="2026-09-10" type="date">
-        </div>
-        <div class="field" style="flex:0 0 240px;">
-          <label>时点缺失策略</label>
-          <select><option>拒绝导入并提示（推荐）</option><option>取文件修改时间</option></select>
+          <input id="importDataTime" value="2026-09-10" type="date">
         </div>
       </div>
     </div>
 
     <div class="card">
-      <h3>文件上传区（4 张 .uz 卡片）</h3>
-      <div class="upzone">
-        <div class="uz ok">
+      <h3>文件上传区（3 类：PO / DO / INV）</h3>
+      <div class="upzone" id="importUploadZone">
+        <div class="uz" data-slot="PO">
           <div class="ic">PO</div>
           <div class="nm">生产订单</div>
-          <div class="st">已选 PO_20260910.xlsx ✓</div>
+          <input type="file" data-file-type="PO" accept=".xlsx,.csv">
           <div class="st">→ 入库作业待推荐队列</div>
         </div>
-        <div class="uz ok">
+        <div class="uz" data-slot="DO">
           <div class="ic">DO</div>
           <div class="nm">交货单</div>
-          <div class="st">已选 DO_20260910.xlsx ✓</div>
+          <input type="file" data-file-type="DO" accept=".xlsx,.csv">
           <div class="st">→ 出库作业拣配任务</div>
         </div>
-        <div class="uz ok">
+        <div class="uz" data-slot="INV">
           <div class="ic">INV</div>
           <div class="nm">库存快照</div>
-          <div class="st">已选 INV_20260910.xlsx ✓</div>
+          <input type="file" data-file-type="INV" accept=".xlsx,.csv">
           <div class="st">→ 建立 cap 基线（P0-F9）</div>
-        </div>
-        <div class="uz ok bi">
-          <div class="ic">BI</div>
-          <div class="nm">成品清单（统计类·低频）</div>
-          <div class="st">已选 成品清单_历史流水.xlsx ✓</div>
-          <div class="st">→ 统计聚合：ABC / 交货单出库量（不建基线）</div>
         </div>
       </div>
       <div style="margin-top:13px;display:flex;gap:10px;">
-        <button class="btn">开始校验</button>
-        <button class="btn ghost">执行导入</button>
+        <button class="btn" id="importValidateBtn">开始校验</button>
+        <button class="btn ghost" id="importExecuteBtn">执行导入</button>
       </div>
     </div>
 
     <div class="card">
-      <h3>导入校验结果（字段命中取自 16 号 A 权威模板 8/8/8/4）</h3>
-      <div class="tbl-scroll">
-        <table>
+      <h3>导入校验结果</h3>
+      <div id="importReceipt" class="state empty">请先上传文件并点击「开始校验」</div>
+      <div class="tbl-scroll hidden" id="importReceiptWrap">
+        <table id="importReceiptTable">
           <tr><th>文件</th><th>解析条数</th><th>字段命中</th><th>口径异常</th><th>状态</th></tr>
-          <tr><td>生产订单</td><td>1,284</td><td>8 / 8</td><td>0</td><td><span class="pill ok">通过</span></td></tr>
-          <tr><td>交货单</td><td>63</td><td>8 / 8</td><td>0</td><td><span class="pill ok">通过</span></td></tr>
-          <tr><td>库存快照</td><td>36,920</td><td>8 / 8</td><td>0</td><td><span class="pill ok">通过</span></td></tr>
-          <tr><td>成品清单（统计类）</td><td>441,000</td><td>4 / 4</td><td>0</td><td><span class="pill ok">通过</span></td></tr>
         </table>
       </div>
-      <div class="note">校验失败须阻断导入并提示，不得带病入库。成功后：PO → 入库队列 / DO → 出库任务 / INV → cap 基线 / BI → ABC 聚合（不建基线、不阻断作业）。</div>
+      <div class="note">校验失败须阻断导入并提示，不得带病入库。成功后：PO → 入库队列 / DO → 出库任务 / INV → cap 基线。</div>
     </div>
 
     <div class="foot">② 数据导入页 · 按 21/22/24 号文档生成</div>
@@ -110,5 +97,82 @@
 
 <a href="chat.html" class="dock" title="对话式操作台常驻浮窗">💬</a>
 <script src="assets/app.js"></script>
+<script>
+(function () {
+  const dataTime = document.getElementById('importDataTime');
+  const receiptEl = document.getElementById('importReceipt');
+  const tableEl = document.getElementById('importReceiptTable');
+  const wrapEl = document.getElementById('importReceiptWrap');
+  if (!dataTime || !receiptEl || !tableEl || !wrapEl) return;
+
+  dataTime.value = new Date().toISOString().slice(0, 10);   // 时点默认当天（spec「数据时点标注与导入即基准」）
+
+  const files = {};        // file_type -> { filename, content_base64 }
+  let sessionNo = null;
+
+  document.querySelectorAll('#importUploadZone input[data-file-type]').forEach(inp => {
+    inp.addEventListener('change', async () => {
+      const ft = inp.dataset.fileType;
+      if (!inp.files.length) return;
+      const f = inp.files[0];
+      files[ft] = { filename: f.name, content_base64: await readFileAsBase64(f) };
+      const card = inp.closest('.uz');
+      card.classList.add('ok');
+      card.querySelector('.st').textContent = '已选 ' + f.name + ' ✓';
+    });
+  });
+
+  document.getElementById('importValidateBtn').addEventListener('click', async () => {
+    if (!dataTime.value) { setState(receiptEl, 'error', { text: '数据时点为必填' }); return; }
+    setState(receiptEl, 'loading', { text: '校验中…' });
+    try {
+      const created = await window.api('/import/session', {
+        method: 'POST', body: { data_time: dataTime.value + 'T00:00:00' }
+      });
+      sessionNo = created.session_no;
+      for (const ft of Object.keys(files)) {
+        await window.api('/import/upload', {
+          method: 'POST', body: Object.assign({ session_no: sessionNo, file_type: ft }, files[ft])
+        });
+      }
+      const res = await window.api('/import/validate', { method: 'POST', body: { session_no: sessionNo } });
+      renderImportReceipt(res.receipt);
+      setState(receiptEl, res.status === 'FAILED' ? 'error' : 'success', {
+        text: '校验完成：成功 ' + res.receipt.success_files + ' 类 / 失败 ' + res.receipt.failed_files + ' 类'
+      });
+    } catch (e) {
+      setState(receiptEl, 'error', { text: (e.body && e.body.message) || e.message, retry: '重试', onRetry: () => location.reload() });
+    }
+  });
+
+  document.getElementById('importExecuteBtn').addEventListener('click', async () => {
+    if (!sessionNo) { setState(receiptEl, 'error', { text: '请先开始校验' }); return; }
+    setState(receiptEl, 'loading', { text: '导入中…' });
+    try {
+      const res = await window.api('/import/execute', { method: 'POST', body: { session_no: sessionNo } });
+      renderImportReceipt(res.receipt);
+      setState(receiptEl, 'success', { text: '导入完成（' + res.status + '）' });
+    } catch (e) {
+      setState(receiptEl, 'error', { text: (e.body && e.body.message) || e.message });
+    }
+  });
+
+  // 校验结果表按真实回执渲染（替换硬编码「通过」）。
+  function renderImportReceipt(receipt) {
+    if (!receipt || !Array.isArray(receipt.files)) { setState(receiptEl, 'error', { text: '回执缺少明细' }); return; }
+    const rows = ['<tr><th>文件</th><th>解析条数</th><th>字段命中</th><th>口径异常</th><th>状态</th></tr>'];
+    receipt.files.forEach(f => {
+      const ok = f.status === 'PASSED';
+      rows.push(
+        '<tr><td>' + f.file_type + ' · ' + f.filename + '</td>' +
+        '<td>' + f.rows + '</td><td>' + f.fields_hit + '</td><td>' + f.anomalies + '</td>' +
+        '<td><span class="pill ' + (ok ? 'ok' : 'red') + '">' + (ok ? '通过' : '失败') + '</span></td></tr>'
+      );
+    });
+    tableEl.innerHTML = rows.join('');
+    wrapEl.classList.remove('hidden');
+  }
+})();
+</script>
 </body>
 </html>
