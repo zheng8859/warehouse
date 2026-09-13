@@ -543,6 +543,18 @@ def test_inventory_item_has_no_foreign_key_to_master_data() -> None:
 
 # ------------------------------------------------------------------ 3.4 AisleCap
 
+def test_aisle_cap_has_cap_physical_column() -> None:
+    """`cap_physical` 是 `cap_reserved` 的新基（16 D5：`cap_reserved = cap_physical × 40%`）。
+
+    口径变了，基必须落列承载 —— 只活在算式里的话，全量重算（tasks 4.2）无处写物理格数，
+    旧基 `cap_total` 会随占用波动，与「固定预留带」的结论相抵。这里只钉列的形状，
+    公式本身的四则运算由 `tests/logic/test_cap_baseline.py` 钉。
+    """
+    col = Base.metadata.tables["aisle_caps"].c.cap_physical
+    assert isinstance(col.type, sa.Integer)
+    assert col.nullable is False
+
+
 def test_aisle_cap_requires_existing_snapshot(session: Session) -> None:
     """tasks 3.4 的验证动作：`snapshot_id` 指向不存在的快照时写入被拒（D5：基线引用必填）。"""
     session.add(

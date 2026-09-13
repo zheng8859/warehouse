@@ -10,9 +10,10 @@
 
 ## 关键口径
 
-- `cap_total`    = 巷道总格数 − 已占格数
-- `cap_reserved` = `cap_total` × 近站台预留比例（默认 40%，仅近站台巷道非零）
-- `cap_usable`   = `cap_total` − `cap_reserved`（非 A 类可用）
+- `cap_physical` = 巷道物理总格数（主数据到位前 = 快照库位去重格数近似）
+- `cap_total`    = `cap_physical` − 已占格数
+- `cap_reserved` = `cap_physical` × 近站台预留比例（默认 40%，仅近站台巷道非零）
+- `cap_usable`   = `max(cap_total` − `cap_reserved`, 0)`（非 A 类可用）
 - 快照是权威、增量是过程：每次快照导入按巷道全量重算并生成新版本，旧版**归档不删除**
   （17 §3.2）。本模块用「`Snapshot` 只能追加」表达这条：表上没有 `updated_at`，
   写入即固化；旧行随时可读。
@@ -267,11 +268,14 @@ class AisleCap(BaseEntity):
 
     aisle_no: Mapped[str] = mapped_column(sa.String(2), nullable=False)
 
-    #: cap_total = 巷道总格数 − 已占格数（17 §3.4 注）。口径不落 CHECK（模块 docstring）。
+    #: cap_physical = 巷道物理总格数（主数据到位前 = 快照库位去重格数近似，16 D5）。
+    #: 默认 0 供存量行（迁移加列时的兜底）；全量重算（app/cap/baseline.py）总是显式覆盖。
+    cap_physical: Mapped[int] = mapped_column(nullable=False, default=0)
+    #: cap_total = cap_physical − 已占格数（17 §3.4 注）。口径不落 CHECK（模块 docstring）。
     cap_total: Mapped[int] = mapped_column(nullable=False)
-    #: cap_reserved = cap_total × 预留比例（默认 40%，仅近站台巷道非零）。
+    #: cap_reserved = cap_physical × 预留比例（默认 40%，仅近站台巷道非零）。
     cap_reserved: Mapped[int] = mapped_column(nullable=False)
-    #: cap_usable = cap_total − cap_reserved（非 A 类可用）。
+    #: cap_usable = max(cap_total − cap_reserved, 0)（非 A 类可用）。
     cap_usable: Mapped[int] = mapped_column(nullable=False)
 
     #: 是否近站台。与 `Aisle.is_near_station` 同样**可空**：取值随快照冻结，
