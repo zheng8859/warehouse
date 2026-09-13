@@ -268,8 +268,8 @@ def test_job_order_defaults(session: Session) -> None:
     assert row.updated_at is not None
 
 
-def test_job_status_accepts_all_seven_values(session: Session) -> None:
-    """7 个状态全部可写，且**存的是取值**（15 §3.1 / 17 §九②）。"""
+def test_job_status_accepts_all_values(session: Session) -> None:
+    """10 个状态全部可写，且**存的是取值**（15 §3.1 / 17 §九②）。"""
     for index, status in enumerate(JobStatus):
         _job_order(session, order_no=f"PO-{index}", line_no="1", status=status)
     session.flush()
@@ -632,21 +632,50 @@ def test_ledger_type_reuses_the_job_type_value_domain() -> None:
 
 
 def test_second_ledger_for_the_same_job_order_is_rejected(session: Session) -> None:
-    """tasks 4.4 的验证动作：**同一作业单的第二条台账写入被拒**。
+    """tasks 4.4 的验证动作：**同一作业单的第二条正常台账写入被拒**。
 
     红线有二：「台账只有一套」、「`EXECUTED` 后不允许重复写台账」（15 §11.7）。
     状态机守卫挡的是「正常路径上再走一次迁移」；这里是**结构层**的兜底 ——
     网络重试、并发确认、绕过状态机的手工写入，撞到的都是这个唯一约束。
 
-    唯一键落在 `job_order_id` 而不是（`ledger_type`, `order_no`）：一张 PO 有多行
+    唯一键落在 `(job_order_id, is_reversal)` 而不是（`ledger_type`, `order_no`）：一张 PO 有多行
     （16 附录A 的行唯一键 = 单据号码 + 行号），而台账按 15 附录A **不记行号** ——
     用（类型, 单号）做键会让多行单据的第二行写不进去，把「防重复」变成「防多行」。
+    冲正后键里多了 `is_reversal`，故「第二条**正常**行」仍被拒，而「一正常 + 一反向」可共存
+    （见 `test_reversal_ledger_coexists_with_normal_ledger`）。
     """
     job = _job_order(session)
     _ledger(session, job)
 
     with pytest.raises(IntegrityError):
         _ledger(session, job)
+    session.rollback()
+
+
+def test_reversal_ledger_coexists_with_normal_ledger(session: Session) -> None:
+    """冲正不撞唯一约束：一单至多一正常行（`is_reversal=False`）+ 一反向行（`is_reversal=True`）。
+
+    这是 `uq_ledgers_job_order_id` 放宽为 `uq_ledgers_job_order_id_reversal(job_order_id, is_reversal)`
+    的语义落点（design.md D3）：冲正写反向行时，原正常行仍在，两者必须能同存一张表 ——
+    否则「整单冲掉」会先撞唯一约束。反向行的「至多一条」由状态机 `VOID` 终态兜底。
+    """
+    job = _job_order(session)
+    _ledger(session, job)                                  # 正常行
+    _ledger(session, job, is_reversal=True)                # 反向行：可共存
+    session.flush()
+
+    rows = session.execute(
+        select(Ledger).where(Ledger.job_order_id == job.id).order_by(Ledger.id)
+    ).scalars().all()
+    assert [r.is_reversal for r in rows] == [False, True]
+
+    # 第二条正常行 / 第二条反向行都被拒。
+    with pytest.raises(IntegrityError):
+        _ledger(session, job)
+    session.rollback()
+
+    with pytest.raises(IntegrityError):
+        _ledger(session, job, is_reversal=True)
     session.rollback()
 
 
@@ -669,8 +698,8 @@ def test_ledger_type_rejected_by_db_check(session: Session) -> None:
             text(
                 "INSERT INTO ledgers "
                 "(warehouse_id, job_order_id, ledger_type, order_no, material_code, batch_no, "
-                " qty, operator_id, executed_at, degraded, created_at) "
-                "VALUES (:w, :j, 'TRANSFER', 'PO-RAW', :m, :b, 1, :op, :now, 0, :now)"
+                " qty, operator_id, executed_at, degraded, is_reversal, created_at) "
+                "VALUES (:w, :j, 'TRANSFER', 'PO-RAW', :m, :b, 1, :op, :now, 0, 0, :now)"
             ),
             {
                 "w": WAREHOUSE,

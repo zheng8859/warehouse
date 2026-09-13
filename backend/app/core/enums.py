@@ -34,10 +34,14 @@ class LedgerType(str, Enum):
 
 
 class JobStatus(str, Enum):
-    """作业单状态机（7 态）。
+    """作业单状态机（10 态）。
 
     合法迁移见 15 §3.1；任何新增状态都需要同步改状态机守卫，
     且 EXECUTED 后不允许重复写台账。
+
+    `VERIFYING` 是后验的**内部中间态**（确认请求内一次走完，不对外停留）；
+    `VERIFY_FAILED` 仅提供重试（回 `VERIFYING`）+ 告警，无「放弃后验」终态；
+    `VOID` 是冲正终态（与 `CANCELLED` 同属无出边的结束节点，`VERIFIED` 不再是终态）。
     """
 
     PENDING = "PENDING"
@@ -46,7 +50,10 @@ class JobStatus(str, Enum):
     REJECTED = "REJECTED"
     CANCELLED = "CANCELLED"
     EXECUTED = "EXECUTED"
+    VERIFYING = "VERIFYING"
     VERIFIED = "VERIFIED"
+    VERIFY_FAILED = "VERIFY_FAILED"
+    VOID = "VOID"
 
 
 class ImportStatus(str, Enum):
