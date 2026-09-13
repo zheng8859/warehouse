@@ -5,7 +5,7 @@
 ## 1. ImportSession 状态机与幂等
 
 - [x] 1.1 实现 `ImportSession` 状态机迁移守卫（8 态 / 10 迁移，非法迁移拒绝），先写 `tests/logic/test_import_session_state.py` 覆盖全部合法迁移 + 非法迁移负例，验证 `pytest tests/logic/test_import_session_state.py -q` 通过
-- [ ] 1.2 实现乐观锁并发守卫（`lock_version`，后到写入被拒），先写 `tests/logic/test_import_session_concurrency.py` 覆盖两端并发仅一方成功，验证逻辑测试通过
+- [x] 1.2 实现乐观锁并发守卫（`lock_version`，后到写入被拒），先写 `tests/logic/test_import_session_concurrency.py` 覆盖两端并发仅一方成功，验证逻辑测试通过
 - [ ] 1.3 实现重复导入判定（数据时点 + 文件校验和 SHA-256），先写 `tests/logic/test_import_dedup.py` 覆盖「同时点同校验和 → 提示跳过/覆盖」「已 BASELINE 会话幂等返回」，验证通过
 
 ## 2. 8 步管线模块（app/importer/）
