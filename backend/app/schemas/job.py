@@ -23,6 +23,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.enums import JobStatus, LedgerType, VerifyResult
+from app.models.job import DeviationCauseKind, DeviationStatus
 
 #: 库位号一律 6 位文本（CLAUDE.md §七）。可空字段不给即「不提供」，给了就得 6 位 ——
 #: 与 DB 的 `_LOCATION_LEN` 同一口径，报文层先拦，避免 500。
@@ -142,3 +143,22 @@ class VerificationItem(BaseModel):
     actual_value: float
     threshold_value: float
     verify_result: VerifyResult
+
+
+class DeviationItem(BaseModel):
+    """`GET /api/deviation` 返回的一行偏离批次（移库任务来源，`17` §4.4）。
+
+    `material_code` / `batch_no` 至少一个非空（`identifier_required` CHECK），故这里
+    各自可空 —— 读侧只透传，不重述那条 DB 约束。`cause_kind` / `status` 是 `str, Enum`
+    （中文取值），序列化即其 `.value`。
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    material_code: str | None
+    batch_no: str | None
+    actual_cross_aisle: int
+    threshold_cross_aisle: int
+    cause_kind: DeviationCauseKind
+    status: DeviationStatus
+    created_at: datetime

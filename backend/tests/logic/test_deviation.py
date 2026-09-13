@@ -24,6 +24,7 @@ from app.core.enums import AccountStatus, JobStatus, JobType, Role
 from app.models.identity import Account
 from app.models.job import Deviation, DeviationCauseKind, DeviationStatus
 from app.services.inbound import confirm_inbound
+from app.services.kpi import list_deviations
 from app.services.relocate import confirm_relocate
 
 from .conftest import InventorySpec, JobOrderSpec, make_scenario
@@ -176,3 +177,45 @@ def test_relocate_deviation_writes_legacy_cause(session: Session) -> None:
     assert dev.actual_cross_aisle == 2
     assert dev.threshold_cross_aisle == 2
     assert dev.cause_kind is DeviationCauseKind.LEGACY_INVENTORY_DRAG
+
+
+# ------------------------------------------------------------------ 偏离清单（移库任务来源，kpi.list_deviations）
+
+def test_list_deviations_filters_by_status(session: Session) -> None:
+    """`kpi.list_deviations` 列出本仓偏离清单，`status` 可选过滤（默认全部）。"""
+    operator = _operator(session)
+    scenario = make_scenario(
+        session,
+        inventory=[
+            InventorySpec(
+                location_code=f"0{i}0101", material_code=MATERIAL, batch_no="LEGACY", qty=10
+            )
+            for i in range(1, 6)
+        ],
+        job_orders=[
+            JobOrderSpec(
+                order_no="PO-01",
+                material_code=MATERIAL,
+                qty=40,
+                batch_no=BATCH,
+                job_type=JobType.INBOUND,
+                status=JobStatus.PLANNED,
+            )
+        ],
+    )
+    order = scenario.job_orders[0]
+    confirm_inbound(
+        session,
+        job_order=order,
+        operator_id=operator.id,
+        executed_at=NOW,
+        target_location_code="060101",
+        snapshot=scenario.snapshot,
+    )
+
+    assert [d.id for d in list_deviations(session, warehouse_id=WAREHOUSE)] == [
+        d.id for d in _deviations(session)
+    ]
+    assert list_deviations(session, warehouse_id=WAREHOUSE, status=DeviationStatus.OPEN)
+    assert list_deviations(session, warehouse_id=WAREHOUSE, status=DeviationStatus.IMPROVED) == []
+    assert list_deviations(session, warehouse_id="OTHER-WAREHOUSE") == []

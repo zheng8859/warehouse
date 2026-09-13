@@ -24,7 +24,7 @@ import pytest
 
 from app.core.enums import JobStatus, JobType
 from tests.api.conftest import Api
-from tests.logic.conftest import JobOrderSpec
+from tests.logic.conftest import InventorySpec, JobOrderSpec
 
 pytestmark = pytest.mark.api
 
@@ -155,3 +155,53 @@ def test_verification_read_of_unknown_order_rejects(job_api: Api) -> None:
 
     assert response.status_code == 422
     assert response.json()["error"] == "validation_blocked"
+
+
+# ------------------------------------------------------------------ 偏离清单读
+
+def test_deviation_read_lists_deviations(job_api: Api) -> None:
+    """`GET /api/deviation` 列出本仓偏离批次清单（移库任务来源）。"""
+    scenario = job_api.seed(
+        inventory=[
+            InventorySpec(
+                location_code=f"0{i}0101", material_code=MATERIAL, batch_no="LEGACY", qty=10
+            )
+            for i in range(1, 6)
+        ],
+        job_orders=[
+            JobOrderSpec(
+                order_no="PO-01", material_code=MATERIAL, qty=40,
+                batch_no=BATCH, job_type=JobType.INBOUND, status=JobStatus.PLANNED,
+            ),
+        ],
+    )
+    order_id = str(scenario.job_orders[0].id)
+
+    # 入库落到第 6 条巷道 → 同物料跨巷道 6>5，写一条 Deviation。
+    confirmed = job_api.client.post(
+        "/api/job/batch/confirm",
+        json={
+            "warehouse_id": WAREHOUSE,
+            "orders": [{"job_order_id": order_id, "target_location_code": "060101"}],
+        },
+        headers=job_api.headers,
+    )
+    assert confirmed.status_code == 200
+    assert confirmed.json()["results"][0]["status"] == JobStatus.VERIFIED.value
+
+    response = job_api.client.get(
+        "/api/deviation",
+        params={"warehouse_id": WAREHOUSE},
+        headers=job_api.headers,
+    )
+
+    assert response.status_code == 200
+    rows = response.json()
+    assert len(rows) == 1
+    dev = rows[0]
+    assert dev["material_code"] == MATERIAL
+    assert dev["batch_no"] == BATCH
+    assert dev["actual_cross_aisle"] == 6
+    assert dev["threshold_cross_aisle"] == 5
+    assert dev["cause_kind"] == "新入库收拢不达标"
+    assert dev["status"] == "未处理"

@@ -15,6 +15,7 @@
 | POST | `/api/job/{id}/void` | 冲正（`EXECUTED/VERIFIED → VOID`） | `void_job` |
 | GET  | `/api/ledger` | 按作业单查台账（含反向行） | — |
 | GET  | `/api/verification/{job_id}` | 查某单的后验结果 | — |
+| GET  | `/api/deviation` | 查本仓偏离批次清单（移库任务来源） | `kpi.list_deviations` |
 
 ## 端点 = 组装点，不是编排本身
 
@@ -53,13 +54,14 @@ from app.core.enums import JobStatus, JobType
 from app.core.errors import StateConflict, ValidationBlocked
 from app.core.state_machine import assert_transition
 from app.models.identity import Account
-from app.models.job import JobOrder, Ledger, Verification
+from app.models.job import DeviationStatus, JobOrder, Ledger, Verification
 from app.models.linkage import Snapshot
 from app.schemas.job import (
     BatchConfirmRequest,
     BatchConfirmResponse,
     ConfirmItem,
     ConfirmOutcome,
+    DeviationItem,
     JobStatusResponse,
     LedgerItem,
     RejectRequest,
@@ -67,6 +69,7 @@ from app.schemas.job import (
     VerificationItem,
     VoidRequest,
 )
+from app.services import kpi
 from app.services.inbound import confirm_inbound
 from app.services.outbound import confirm_outbound
 from app.services.relocate import confirm_relocate
@@ -161,9 +164,9 @@ def _current_snapshot_or_none(session: Session, *, warehouse_id: str) -> Snapsho
 
     与 `allocate._current_snapshot` 的不同只在「一版都没有」的处置：分配要拿
     `snapshot_version` 渲染响应，故**阻断**；确认 / 冲正 / 后验把 `None` 交给编排 ——
-    `apply_increment` 对 `snapshot=None` 是 no-op、`run_verification` 把它判成
-    `VERIFY_FAILED`（快照缺失是「没算」不是「达标」，`CLAUDE.md` §四）。两处登记见
-    `design.md`。
+    `apply_increment` 对 `snapshot=None` 是 no-op、`_confirm_and_execute` / `run_verification`
+    遇到快照缺失**阻断**（`BlockedMissingPrerequisite`，409，不迁 `VERIFY_FAILED` ——
+    快照缺失是「没算」不是「达标」，`CLAUDE.md` §四）。两处登记见 `design.md`。
     """
     return session.scalars(
         sa.select(Snapshot)
@@ -331,7 +334,8 @@ def retry_job(
     """后验重试：`VERIFY_FAILED → VERIFYING → VERIFIED / VERIFY_FAILED`（`15-01` §3.1）。
 
     重试**就是** `run_verification`（「无放弃后验终态」由「不存在别的后验入口」兑现）。
-    快照取当前基线；缺失时后验仍判 `VERIFY_FAILED`（不静默 PASS）。
+    快照取当前基线；缺失时**阻断**（`BlockedMissingPrerequisite`，409 —— 仍缺快照无从
+    重算，提示重新导入，不静默 PASS 也不迁 `VERIFY_FAILED`）。
     """
     order = _load_order(session, warehouse_id=payload.warehouse_id, job_id=job_id)
     snapshot = _current_snapshot_or_none(session, warehouse_id=payload.warehouse_id)
@@ -396,3 +400,18 @@ def list_verifications(
         .order_by(Verification.id)
     )
     return [VerificationItem.model_validate(row) for row in rows]
+
+
+@reads_router.get("/deviation", response_model=list[DeviationItem])
+def list_deviation(
+    warehouse_id: str = Query(min_length=1, max_length=32),
+    status: DeviationStatus | None = Query(default=None),
+    session: Session = Depends(get_db),
+) -> list[DeviationItem]:
+    """列出本仓的偏离批次清单（移库任务来源，`17` §4.4）。`status` 可选过滤。
+
+    spec「偏离批次标记」：后验超标写入的 `Deviation` 在这里可查，操作员据此发起收拢。
+    聚合与分页属阶段六 KPI 看板，本端点只落「可查」（design.md D5）。
+    """
+    rows = kpi.list_deviations(session, warehouse_id=warehouse_id, status=status)
+    return [DeviationItem.model_validate(row) for row in rows]
