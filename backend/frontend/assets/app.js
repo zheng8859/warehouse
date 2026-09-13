@@ -118,3 +118,24 @@ document.querySelectorAll('[data-reason]').forEach(btn => {
     if (target) { target.classList.remove('hidden'); }
   });
 });
+
+// 四态占位触发钩子（21 号 §7.11）：把容器切到 空/加载/成功/异常 之一
+// 用法：setState(el, 'empty', {text:'请先导入生产订单'}); setState(el, 'error', {text:'导入失败', retry:'重试', onRetry:fn});
+function setState(el, state, opts) {
+  opts = opts || {};
+  el.classList.remove('empty', 'loading', 'success', 'error');
+  el.classList.add('state', state);
+  if (state === 'loading') {
+    el.innerHTML = '<span class="spin"></span>' + (opts.text || '处理中…');
+    return;
+  }
+  el.textContent = opts.text || '';
+  if (state === 'error' && opts.retry) {
+    const b = document.createElement('button');
+    b.className = 'btn ghost retry';
+    b.textContent = opts.retry;
+    if (opts.onRetry) b.addEventListener('click', opts.onRetry);
+    el.appendChild(b);
+  }
+}
+window.setState = setState;
