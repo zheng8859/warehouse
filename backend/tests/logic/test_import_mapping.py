@@ -63,13 +63,24 @@ def test_po_full_template_maps_completely() -> None:
     result = build_mapping(PO_HEADERS, FileType.PO)
     assert result.is_complete is True
     assert result.field_to_source["order_no"] == "单据号码"
-    assert result.field_to_source["job_type"] == "类型"
+    assert result.field_to_source["order_type"] == "类型"
+    assert result.field_to_source["production_date"] == "生产日期"
 
 
 def test_do_has_same_required_set_as_po() -> None:
     """DO 模版与 PO 同构（单据号码/行号/类型/仓库号/料号/品名/生产日期/数量）。"""
     result = build_mapping(PO_HEADERS, FileType.DO)
     assert result.is_complete is True
+
+
+def test_po_required_is_five_strong_required_only() -> None:
+    """PO 强必填只有 5 列；类型（order_type）与生产日期是选填，缺失不阻断。"""
+    headers = ["单据号码", "行号", "仓库号", "料号", "数量"]  # 无 类型、无 品名、无 生产日期
+    result = build_mapping(headers, FileType.PO)
+    assert result.is_complete is True
+    assert result.missing_required == frozenset()
+    assert "order_type" not in result.field_to_source
+    assert "production_date" not in result.field_to_source
 
 
 # ------------------------------------------------------------------ 容错：别名 / 大小写 / 全半角

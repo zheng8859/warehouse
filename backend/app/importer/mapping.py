@@ -14,11 +14,19 @@
 
 ## 必填 / 选填的口径
 
-- 必填 = 各模版除「品名」外的全部列。品名（`material_name`）在三类文件里都是选填：
-  它是给人看的显示名，可由 `material_code` 从物料主数据派生，`JobOrder.material_name` 与
-  `InventoryItem.material_name` 也都可空（16 A.1 标选填）。
-- PO / DO 的「生产日期」（`production_date`）是必填列：入库单的批号由系统按生产批
-  规则从生产日期生成（`JobOrder.batch_no` 的注释），缺失则无法生成批号。
+- 必填 = 各模版标 **✅** 的强必填列（16 A.1 / A.2 / A.3）。选填列缺失**不阻断**，其中只有
+  「品名」在回执里显式标注降级（它是给人看的显示名，可由 `material_code` 从物料主数据派生，
+  `JobOrder.material_name` 与 `InventoryItem.material_name` 也都可空，16 A.1 标选填）。
+  - INV：仓库号 / 库位号 / 料号 / 批号 / 状态 / 数量 / 库存记录时间（7 列）。
+  - PO / DO：单据号码 / 行号 / 仓库号 / 料号 / 数量（5 列）；类型（`order_type`，单据细分）、
+    品名、生产日期都是选填。
+- 「类型」（`order_type`）是**单据细分，不是路由依据**（16 A.4 #5：文件本身区分单据类型，
+  文件内的「类型」字段不作为路由依据）。故 `JobOrder.job_type` 由 `FileType` 派生
+  （PO→INBOUND、DO→OUTBOUND），**不读源文件的「类型」列** —— 该列只被识别为合法模版列
+  （不落 `unrecognized`），不参与分流。
+- 「生产日期」（`production_date`）选填：它只是 FIFO / 批号生成的**参考**（16 A.2/A.3 标选填），
+  缺失不阻断；批号由系统在入库单建立时按生产批规则生成（`JobOrder.batch_no` 的注释），
+  规则本身属阶段四。
 """
 from __future__ import annotations
 
@@ -53,7 +61,7 @@ FIELD_ALIASES: Final[Mapping[str, frozenset[str]]] = MappingProxyType(
         "snapshot_time": frozenset({"库存记录时间", "库存时间", "记录时间", "snapshot_time"}),
         "order_no": frozenset({"单据号码", "单据号", "单号", "订单号", "order_no", "order"}),
         "line_no": frozenset({"行号", "行项目", "line_no", "line"}),
-        "job_type": frozenset({"类型", "作业类型", "单据类型", "job_type", "type"}),
+        "order_type": frozenset({"类型", "单据类型", "order_type"}),
         "production_date": frozenset({"生产日期", "生产日", "production_date"}),
     }
 )
@@ -65,10 +73,10 @@ REQUIRED_BY_TYPE: Final[Mapping[FileType, frozenset[str]]] = MappingProxyType(
             {"warehouse_no", "location_code", "material_code", "batch_no", "item_status", "qty", "snapshot_time"}
         ),
         FileType.PO: frozenset(
-            {"order_no", "line_no", "job_type", "warehouse_no", "material_code", "qty", "production_date"}
+            {"order_no", "line_no", "warehouse_no", "material_code", "qty"}
         ),
         FileType.DO: frozenset(
-            {"order_no", "line_no", "job_type", "warehouse_no", "material_code", "qty", "production_date"}
+            {"order_no", "line_no", "warehouse_no", "material_code", "qty"}
         ),
     }
 )
