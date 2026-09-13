@@ -30,7 +30,6 @@ from sqlalchemy.orm import Session
 from app.core.enums import ItemStatus, LedgerType
 from app.core.errors import ValidationBlocked
 from app.engine.allocator import to_occupied_cells
-from app.engine.factors import aisle_of
 from app.models.job import Ledger
 from app.models.linkage import InventoryItem, Snapshot
 

@@ -23,9 +23,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.enums import AccountStatus, JobStatus, JobType, Role, VerifyResult
+from app.core.errors import BlockedMissingPrerequisite
 from app.models.identity import Account
 from app.models.job import JobOrder, Ledger, Verification
-from app.models.linkage import ImportSession, InventoryItem, Snapshot
 from app.services.inbound import confirm_inbound
 from app.services.outbound import confirm_outbound
 from app.services.relocate import confirm_relocate
@@ -70,41 +70,6 @@ def _ledgers(session: Session, order: JobOrder) -> list[Ledger]:
             select(Ledger).where(Ledger.job_order_id == order.id).order_by(Ledger.id)
         )
     )
-
-
-def _make_snapshot(session: Session) -> Snapshot:
-    """重试用：补一份含 M1 库存的快照。首份快照的会话 / 批次号用固定值 —— 本用例里没有
-    第二份快照，不撞唯一约束。"""
-    import_session = ImportSession(
-        warehouse_id=WAREHOUSE,
-        session_no="IMP-RETRY",
-        import_batch_no="BAT-RETRY",
-        data_time=NOW,
-    )
-    session.add(import_session)
-    session.flush()
-    snapshot = Snapshot(
-        warehouse_id=WAREHOUSE,
-        snapshot_time=NOW,
-        version_no=1,
-        import_session_id=import_session.id,
-    )
-    session.add(snapshot)
-    session.flush()
-    session.add(
-        InventoryItem(
-            warehouse_id=WAREHOUSE,
-            snapshot_id=snapshot.id,
-            location_code="010104",
-            material_code=MATERIAL,
-            batch_no=BATCH,
-            qty=10,
-            item_status="合格",
-            snapshot_time=NOW,
-        )
-    )
-    session.flush()
-    return snapshot
 
 
 # ------------------------------------------------------------------ 确认请求结束必为 VERIFIED / VERIFY_FAILED
@@ -182,8 +147,8 @@ def test_confirm_inbound_verifies_deviation(session: Session) -> None:
     assert by_kind["同物料跨巷道"].actual_value == 6
 
 
-def test_confirm_inbound_without_snapshot_verify_failed(session: Session) -> None:
-    """无快照 → 后验无从计算 → `VERIFY_FAILED`，不写 `Verification`，但台账仍在。"""
+def test_confirm_inbound_without_snapshot_blocked(session: Session) -> None:
+    """无快照 → 确认**阻断**（`BlockedMissingPrerequisite`，409），不写台账、不迁 `VERIFY_FAILED`。"""
     operator = _operator(session)
     scenario = make_scenario(
         session,
@@ -201,25 +166,30 @@ def test_confirm_inbound_without_snapshot_verify_failed(session: Session) -> Non
     )
     order = scenario.job_orders[0]
 
-    confirm_inbound(
-        session,
-        job_order=order,
-        operator_id=operator.id,
-        executed_at=NOW,
-        target_location_code="010104",
-        snapshot=None,
-    )
+    with pytest.raises(BlockedMissingPrerequisite):
+        confirm_inbound(
+            session,
+            job_order=order,
+            operator_id=operator.id,
+            executed_at=NOW,
+            target_location_code="010104",
+            snapshot=None,
+        )
 
-    assert order.status is JobStatus.VERIFY_FAILED
+    assert order.status is JobStatus.PLANNED  # 阻断发生在迁移之前，单子仍在 PLANNED
+    assert _ledgers(session, order) == []
     assert _verifications(session, order) == []
-    # 后验失败不推翻已执行的事实（15-01 §3.3.2：台账已正确，后验仅作度量）
-    assert len(_ledgers(session, order)) == 1
 
 
 # ------------------------------------------------------------------ 失败重试边（无放弃后验终态）
 
 def test_verify_failed_retries_to_verified(session: Session) -> None:
-    """`VERIFY_FAILED → VERIFYING → VERIFIED`：补快照后重试即 `run_verification`。"""
+    """`VERIFY_FAILED → VERIFYING → VERIFIED`：重试即 `run_verification`。
+
+    快照缺失现在在确认处就**阻断**（见上一个用例），不再经由 `VERIFY_FAILED` 表达 ——
+    故这里直接置 `VERIFY_FAILED`（模拟此前某次后验因数据矛盾失败），补快照后重试，
+    钉的是「重试边」而非「如何进入 VERIFY_FAILED」。
+    """
     operator = _operator(session)
     scenario = make_scenario(
         session,
@@ -233,20 +203,12 @@ def test_verify_failed_retries_to_verified(session: Session) -> None:
                 status=JobStatus.PLANNED,
             )
         ],
-        snapshot_time=None,
     )
     order = scenario.job_orders[0]
-    confirm_inbound(
-        session,
-        job_order=order,
-        operator_id=operator.id,
-        executed_at=NOW,
-        target_location_code="010104",
-        snapshot=None,
-    )
-    assert order.status is JobStatus.VERIFY_FAILED
+    order.status = JobStatus.VERIFY_FAILED
+    session.flush()
 
-    run_verification(session, job_order=order, snapshot=_make_snapshot(session))
+    run_verification(session, job_order=order, snapshot=scenario.snapshot)
 
     assert order.status is JobStatus.VERIFIED
     assert len(_verifications(session, order)) == 2

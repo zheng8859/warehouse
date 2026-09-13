@@ -122,7 +122,11 @@ def test_void_pending_is_rejected(session: Session) -> None:
 
 
 def test_void_verify_failed_is_rejected(session: Session) -> None:
-    """`VERIFY_FAILED` 冲正 → `StateConflict`：后验失败只有重试边，须先重试到 `VERIFIED`。"""
+    """`VERIFY_FAILED` 冲正 → `StateConflict`：后验失败只有重试边，须先重试到 `VERIFIED`。
+
+    快照缺失现在在确认处就**阻断**（见 `test_verify_flow`），不再经由 `VERIFY_FAILED`
+    表达 —— 故这里直接置 `VERIFY_FAILED`，钉「后验失败不可冲正」而非「如何进入」。
+    """
     operator = _operator(session)
     scenario = make_scenario(
         session,
@@ -136,18 +140,10 @@ def test_void_verify_failed_is_rejected(session: Session) -> None:
                 status=JobStatus.PLANNED,
             )
         ],
-        snapshot_time=None,
     )
     order = scenario.job_orders[0]
-    confirm_inbound(
-        session,
-        job_order=order,
-        operator_id=operator.id,
-        executed_at=NOW,
-        target_location_code="010104",
-        snapshot=None,
-    )
-    assert order.status is JobStatus.VERIFY_FAILED
+    order.status = JobStatus.VERIFY_FAILED
+    session.flush()
 
     with pytest.raises(StateConflict):
         void_job(
@@ -155,7 +151,7 @@ def test_void_verify_failed_is_rejected(session: Session) -> None:
             job_order=order,
             operator_id=operator.id,
             voided_at=NOW,
-            snapshot=None,
+            snapshot=scenario.snapshot,
         )
     assert order.status is JobStatus.VERIFY_FAILED
 

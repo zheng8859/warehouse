@@ -36,10 +36,12 @@ D5「同样输入必得同样输出」）。
 
 ## 快照缺失时怎么办
 
-`verify_inbound` 在 `snapshot.snapshot_present=False` 时**抛 `ValueError`** 而不是静默 PASS：
-`SnapshotIndex.profile()` 对缺失快照返回空档案（`cross_aisle_count=0`），若照常判定会得一个
-「0 ≤ 5 → PASS」的假达标 —— 与「快照缺失或过期 → 阻断」这条红线（`CLAUDE.md` §四）同源。
-缺失不是「算出来达标」，是「没算」。后验编排据此把该单迁 `VERIFY_FAILED`（tasks 4.2）。
+`verify_inbound` 在 `snapshot.snapshot_present=False` 时**抛 `BlockedMissingPrerequisite`**
+而不是静默 PASS：`SnapshotIndex.profile()` 对缺失快照返回空档案（`cross_aisle_count=0`），
+若照常判定会得一个「0 ≤ 5 → PASS」的假达标 —— 与「快照缺失或过期 → 阻断」这条红线
+（`CLAUDE.md` §四）同源。缺失不是「算出来达标」，是「没算」。快照缺失**直接阻断**
+（409，不迁 `VERIFY_FAILED`）；「算不出来」的数据自相矛盾（如台账缺源库位）才落
+`VERIFY_FAILED` 待重试 —— 两者分开，见 `run_verification` 的两段 except。
 """
 from __future__ import annotations
 
@@ -50,6 +52,7 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from app.core.enums import JobStatus, JobType, VerifyResult
+from app.core.errors import BlockedMissingPrerequisite, DomainError, ValidationBlocked
 from app.core.state_machine import assert_transition
 from app.engine.factors import SnapshotIndex, aisle_of, load_snapshot_index
 from app.models.job import Deviation, DeviationCauseKind, JobOrder, Ledger, Verification
@@ -143,11 +146,12 @@ def verify_inbound(
     任一口径超标即该口径 DEVIATION —— 两条各自判、各自落 `Verification`（`17` §4.4：
     入库有两条后验记录）。
 
-    快照缺失抛 `ValueError`（见模块 docstring）：缺快照是「没算」，不是「达标」。
+    快照缺失抛 `BlockedMissingPrerequisite`（见模块 docstring）：缺快照是「没算」，不是「达标」。
     """
     if not snapshot.snapshot_present:
-        raise ValueError(
-            "后验无库存快照（未导入或已过期）——入库跨巷道无从计算，不得当作达标"
+        raise BlockedMissingPrerequisite(
+            "后验无库存快照（未导入或已过期）——入库跨巷道无从计算，不得当作达标",
+            detail={"material_code": material_code, "batch_no": batch_no},
         )
     profile = snapshot.profile(material_code)
     material_count = profile.cross_aisle_count
@@ -236,7 +240,8 @@ def _pick_qty_from_ledger(session: Session, job_order: JobOrder) -> dict[str, in
     那张 DO 的聚合属批量确认 / KPI 层（6.1 / 阶段六），不在这里。这里把「这条单拣在哪」
     如实地记成一条巷道，让后验至少可落、可查。
 
-    台账缺失源库位（数据自相矛盾）时抛 `ValueError` → 编排迁 `VERIFY_FAILED`，不静默 PASS。
+    台账缺失源库位（数据自相矛盾）时抛 `ValidationBlocked` → 编排迁 `VERIFY_FAILED`，
+    不静默 PASS。
     """
     ledger = session.scalars(
         sa.select(Ledger).where(
@@ -244,7 +249,10 @@ def _pick_qty_from_ledger(session: Session, job_order: JobOrder) -> dict[str, in
         )
     ).first()
     if ledger is None or ledger.source_location_code is None:
-        raise ValueError("出库台账缺失源库位——加权集中度无从计算，不得当作达标")
+        raise ValidationBlocked(
+            "出库台账缺失源库位——加权集中度无从计算，不得当作达标",
+            detail={"job_order_id": job_order.id},
+        )
     return {aisle_of(ledger.source_location_code): ledger.qty}
 
 
@@ -258,8 +266,9 @@ def _compute_metrics(
 
     入库 / 移库都要「台账写入**后**」的库存分布，故这里从 `snapshot.id` **重新聚合**索引
     （`apply_increment` 已把增量 flush 进库存行，同事务内的 SELECT 看得到）—— 纯函数自己
-    不读会话，取数这一下由编排补上。任一口径无法取数（快照缺失 / 缺移库前跨巷道）即抛
-    `ValueError`，由 `run_verification` 接住迁 `VERIFY_FAILED`。
+    不读会话，取数这一下由编排补上。任一口径无法取数即抛 `DomainError` 子类：快照缺失抛
+    `BlockedMissingPrerequisite`（阻断），缺移库前跨巷道抛 `ValidationBlocked`（迁
+    `VERIFY_FAILED`）—— 由 `run_verification` 分派。
     """
     if job_order.job_type is JobType.INBOUND:
         index = load_snapshot_index(
@@ -276,12 +285,18 @@ def _compute_metrics(
         return [verify_outbound(pick_qty_by_aisle=_pick_qty_from_ledger(session, job_order))]
     # RELOCATE
     if cross_aisle_before is None:
-        raise ValueError("移库后验缺少移库前跨巷道数——无从比较，不得当作达标")
+        raise ValidationBlocked(
+            "移库后验缺少移库前跨巷道数——无从比较，不得当作达标",
+            detail={"job_order_id": job_order.id},
+        )
     index = load_snapshot_index(
         session, snapshot_id=snapshot.id if snapshot is not None else None
     )
     if not index.snapshot_present:
-        raise ValueError("移库后验无库存快照——跨巷道无从计算，不得当作达标")
+        raise BlockedMissingPrerequisite(
+            "移库后验无库存快照——跨巷道无从计算，不得当作达标",
+            detail={"job_order_id": job_order.id},
+        )
     after = index.profile(job_order.material_code).cross_aisle_count
     return [verify_relocate(cross_aisle_before=cross_aisle_before, cross_aisle_after=after)]
 
@@ -363,7 +378,8 @@ def run_verification(
     savepoint 回滚后 DB 上仍是 `VERIFYING`，`VERIFY_FAILED` 的回边才有合法起点）；计算 +
     落 `Verification` + `VERIFIED` 包在 `begin_nested()` 里，任一步失败只滚这一段，
     台账 / cap 增量留在外层事务 —— 后验失败不推翻已执行的事实（`15-01` §3.3.2「作业单已
-    EXECUTED、台账已正确，后验仅作度量」），单子落 `VERIFY_FAILED` 待重试。
+    EXECUTED、台账已正确，后验仅作度量」）。失败分两种：快照缺失**阻断**上抛（409），
+    数据自相矛盾才落 `VERIFY_FAILED` 待重试。
 
     返回**同一个** `job_order`（`VERIFIED` 或 `VERIFY_FAILED`）。不 `commit`：事务边界属于
     端点 / 确认链（与 `_confirm_and_execute` 同一口径）。
@@ -377,9 +393,18 @@ def run_verification(
             _write_deviations(session, job_order, metrics)
             job_order.status = assert_transition(job_order.status, JobStatus.VERIFIED)
             session.flush()
-    except Exception:
-        # savepoint 已回滚，DB 上回到 VERIFYING；内存态可能残留 VERIFIED，先 expire 回库。
+    except BlockedMissingPrerequisite:
+        # 快照缺失 → 阻断（409），不迁 VERIFY_FAILED（CLAUDE.md §四「阻断并提示重新导入」）。
+        # 上抛让调用方（重试端点）据此拒绝；`VERIFYING` 已在 savepoint 外 flush，外层事务
+        # 回滚后单子回到原状态（EXECUTED / VERIFY_FAILED）。
+        raise
+    except DomainError:
+        # 数据自相矛盾等「算不出来」→ VERIFY_FAILED，可重试；savepoint 已回滚，DB 上
+        # 回到 VERIFYING；内存态可能残留 VERIFIED，先 expire 回库。
         session.expire(job_order)
         job_order.status = assert_transition(job_order.status, JobStatus.VERIFY_FAILED)
         session.flush()
+    except Exception:
+        # 非预期（DB 错误 / bug）不静默吞 —— 上抛，让事务边界按失败处理（S7）。
+        raise
     return job_order

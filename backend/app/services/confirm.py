@@ -19,23 +19,28 @@
 `CONFIRMED` 与调用方的基线都留在外层事务里 —— 「台账与 cap 增量原子提交」因此仍由
 真实事务兑现，而不是应用层补偿（CLAUDE.md §四 / design.md D7）。
 
-**两道守卫（都在 try 之外，原样上抛）**：
+**三道守卫（都在 try 之外，原样上抛）**：
 1. **乐观锁** `bump_lock_version` —— 先提交者推进版本、后提交者被拒（spec `data-model`
    「并发确认仅一方成功」）。
-2. **状态机** `assert_transition(PLANNED, CONFIRMED)` —— 初始状态不是 `PLANNED`
+2. **快照前置** —— 确认链要快照做 cap 增量与后验，快照缺失即抛
+   `BlockedMissingPrerequisite`（409）**直接阻断**，不写台账、不迁 `VERIFY_FAILED`
+   （`CLAUDE.md` §四「快照缺失或过期 → 阻断并提示重新导入，不猜测落位」）。
+3. **状态机** `assert_transition(PLANNED, CONFIRMED)` —— 初始状态不是 `PLANNED`
    （已确认过 / 已执行 / 已冲正）时抛 `StateConflict`。`EXECUTED` 后重复确认撞的
-   正是这道守卫（15 §11.7），不会写出第二条台账。两道都是「调用方过期」，不是
-   「执行失败」，不该被降级吞掉。
+   正是这道守卫（15 §11.7），不会写出第二条台账。三道都是「调用方过期 / 前置缺失」，
+   不是「执行失败」，不该被降级吞掉。
 """
 from __future__ import annotations
 
 from datetime import datetime
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.cap.increment import apply_increment
 from app.core.concurrency import bump_lock_version
 from app.core.enums import JobStatus
+from app.core.errors import BlockedMissingPrerequisite, DomainError
 from app.core.state_machine import assert_transition
 from app.models.job import JobOrder
 from app.models.linkage import Snapshot
@@ -99,7 +104,16 @@ def _confirm_and_execute(
         job_order, expected=job_order.lock_version if lock_version is None else lock_version
     )
 
-    # 2. 确认（决策权在人，二次确认卡已在端点 / 前端通过）：PLANNED → CONFIRMED。
+    # 2. 快照前置守卫（CLAUDE.md §四）：确认链要快照做 cap 增量与后验，缺快照直接阻断，
+    #    不写台账、不迁 VERIFY_FAILED —— 「没算」不是「执行失败」，重导入后重新确认。
+    if snapshot is None:
+        raise BlockedMissingPrerequisite(
+            f"作业单 #{job_order.id} 无当前库存快照 —— 确认需快照做 cap 增量与后验，"
+            "请重新导入快照后再确认，不猜测落位",
+            detail={"job_order_id": job_order.id},
+        )
+
+    # 3. 确认（决策权在人，二次确认卡已在端点 / 前端通过）：PLANNED → CONFIRMED。
     #    `assert_transition` 在这里、在 try 之外 —— 见模块 docstring「幂等 / 守卫」。
     job_order.status = assert_transition(job_order.status, JobStatus.CONFIRMED)
     job_order.confirmed_by_id = operator_id
@@ -109,7 +123,7 @@ def _confirm_and_execute(
     job_order.actual_qty = actual_qty if actual_qty is not None else job_order.qty
     session.flush()
 
-    # 2. 执行：写台账 → cap 增量 → CONFIRMED → EXECUTED，同一 savepoint。
+    # 4. 执行：写台账 → cap 增量 → CONFIRMED → EXECUTED，同一 savepoint。
     try:
         with session.begin_nested():
             ledger = write_ledger(
@@ -128,7 +142,8 @@ def _confirm_and_execute(
             job_order.status = assert_transition(job_order.status, JobStatus.EXECUTED)
             job_order.executed_at = executed_at
             session.flush()
-    except Exception:
+    except (DomainError, IntegrityError):
         # savepoint 已整体回滚（台账、cap 增量、EXECUTED 迁移都没了），回边退回 PLANNED。
+        # 只收「执行失败」（写台账 / cap 增量的业务校验或 DB 约束）；非预期异常原样上抛。
         _demote_to_planned(session, job_order)
     return job_order

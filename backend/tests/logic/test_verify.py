@@ -13,13 +13,14 @@
   3. **移库**（相对阈值）：移库后同物料跨巷道数**低于**移库前；持平或恶化即
      `DEVIATION`（`15-04` §8.1）。
 
-快照缺失时 `verify_inbound` 抛 `ValueError` 而不是假达标（模块 docstring 的口径）。
+快照缺失时 `verify_inbound` 抛 `BlockedMissingPrerequisite` 而不是假达标（模块 docstring 的口径）。
 """
 from __future__ import annotations
 
 import pytest
 
 from app.core.enums import VerifyResult
+from app.core.errors import BlockedMissingPrerequisite
 from app.engine.factors import SnapshotIndex
 from app.services.verify import (
     concentration_aisle_count,
@@ -115,9 +116,9 @@ def test_verify_inbound_batch_deviation() -> None:
 
 
 def test_verify_inbound_missing_snapshot_raises() -> None:
-    """快照缺失 → `ValueError`（「没算」不是「达标」，交给编排迁 `VERIFY_FAILED`）。"""
+    """快照缺失 → `BlockedMissingPrerequisite`（「没算」不是「达标」，确认处阻断 409）。"""
     absent = SnapshotIndex.absent("当前无库存快照")
-    with pytest.raises(ValueError):
+    with pytest.raises(BlockedMissingPrerequisite):
         verify_inbound(material_code=MATERIAL, batch_no=BATCH, snapshot=absent)
 
 
