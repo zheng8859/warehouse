@@ -19,7 +19,7 @@
 ## 3. 建立基准（执行导入分流）
 
 - [x] 3.1 实现 PO/DO 分流为 `JobOrder`（`PENDING`，入库队列 / 出库任务），写入失败回滚该批；先写 `tests/api/test_import_execute.py` 覆盖 PO/DO 载入与回滚，验证通过
-- [ ] 3.2 实现 INV 分流为 `InventoryItem`（既有库位/批次分布）+ 触发 cap 基线重算；先写 `tests/api/test_import_execute_inv.py` 覆盖库存分布写入与基线触发，验证通过
+- [x] 3.2 实现 INV 分流为 `InventoryItem`（既有库位/批次分布）+ 触发 cap 基线重算；先写 `tests/api/test_import_execute_inv.py` 覆盖库存分布写入与基线触发，验证通过
 - [ ] 3.3 实现部分文件失败隔离（INV 失败不阻断 PO/DO，回执「成功 N/失败 M」）；先写 `tests/logic/test_import_partial_failure.py`，验证通过
 
 ## 4. cap 基线全量重算与 cap_physical
