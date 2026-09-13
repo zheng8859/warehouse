@@ -293,8 +293,8 @@ Go/No-Go 闸门：集中度达成率 ≥70% 且趋势向好 + 护栏全过 → G
 
 ## 十一、当前状态与待办（阶段四）
 
-**阶段一、二、三已收尾并打标（`v0.1.0` / `v0.2.0` / `v0.3.0`）。阶段四接下来
-（`28` · 设计 `15`+`16`）：三类作业管线 + 文件导入 + cap 自维护。**
+**阶段一、二、三已收尾并打标（`v0.1.0` / `v0.2.0` / `v0.3.0`），阶段七（前端基础层，`v0.7.0`）
+已先行收尾。阶段四接下来（`28` · 设计 `15`+`16`）：三类作业管线 + 文件导入 + cap 自维护。**
 
 **阶段一（`v0.1.0`）**：`openspec/` 已初始化且 `config.yaml` 已填 · `backend/` 骨架 · 本文件 ·
 `CONTEXT.md` · `git init`（`main` 分支，origin = 本地裸仓库 `D:\成品库位智能推荐\warehouse-origin.git`）·
@@ -335,12 +335,22 @@ JWT（HS256）认证 + 权限矩阵骨架（`13` §2.2 的逐条搬运）· 乐�
 板-格换算规则、分档阈值与溢出区形态（`grep -rn "TODO(design.md D14" backend/app/` 得全量）。
 另注意 `16` §360 的「ABC 统计窗口 / N 天」是**另一个 N**，尚未确认
 
+**阶段七（`31` · 设计 `22`+`21` · 前端基础层 · 已先行收尾）**：`backend/frontend/` 8 页 shell / 令牌 / 对话台
+**基线核对通过**（对齐 `21`/`22`/`13` 号），补 3 个 shell 缺口 —— ① 角色菜单可见性（`13` §3.1 前端过滤，
+仓管员 7 / 计划员 4 / 主管 6 / 管理员 8）、② 四态占位系统化（`21` §7.11 · `.state`×4 + `.spin` + `setState`）、
+③ `.node` 流程状态卡（`21` §7.2/§7.8 · entry 蓝 / exec 绿 / ledger 琥珀）。
+`styles.css` `:root` 12 色令牌纠正到 `21` §3.3（=`24` §3.1）权威值，4 处派生冲突色一并对齐。
+边界：未动 p1~p8 正文、未接业务 API、未实现 L2 LLM（属 `29`）。零构建 Vanilla 不变。
+新增 `backend/tests/frontend/test_frontend_foundation.py`（9 条静态断言）· **796 passed**。
+变更 `frontend-foundation` 已归档（2026-09-13），主规格 `openspec/specs/frontend-foundation/spec.md`
+已由 delta 写入。**已合并（`cfd283a`）、已打 `v0.7.0`。**
+
 **未完成**：
 
 - `backend/evals/run_evals.py` —— 阶段六实现；现在跑刻意以退出码 3 失败
 - 四类文件导入管线与 cap 自维护（`app/importer/` / `app/cap/`）—— 阶段四
 - 三类作业管线与台账（`app/services/`）—— 阶段四
-- 冷路径 LLM（`app/llm/`）、KPI 看板、前端 8 页 —— 阶段五 / 六 / 七
+- 冷路径 LLM（`app/llm/`）、KPI 看板 —— 阶段五 / 六
 
 ### pre-commit 钩子：装之前先读这条
 
