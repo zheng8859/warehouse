@@ -71,6 +71,9 @@ def create_app() -> FastAPI:
 
     for module in ROUTE_MODULES:
         app.include_router(module.router)
+    # 验证读端点在 `/api` 顶层（`GET /api/ledger`、`GET /api/verification/{job_id}`），
+    # 与 job 模块的 `/api/job/*` 写路由同文件但不同 router —— 见 job.py 的 `reads_router`。
+    app.include_router(job.reads_router)
 
     @app.on_event("startup")
     async def _log_startup() -> None:
