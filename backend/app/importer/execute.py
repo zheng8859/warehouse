@@ -46,6 +46,7 @@ from app.cap.baseline import establish_baseline
 from app.core.enums import FileType, ImportStatus, JobType
 from app.core.errors import DomainError
 from app.core.import_state import assert_import_transition
+from app.importer.dedup import is_already_baselined
 from app.importer.loaders import as_location_code
 from app.importer.mapping import MappingResult
 from app.importer.session import SourceFile, parse_source, passed_filenames
@@ -166,6 +167,12 @@ def execute_import(
     调用方按 `session_row.status` 区分。基线重算失败（`establish_baseline`）原样上抛，
     不回退状态（无 `IMPORTED → FAILED` 回边），由调用方整体回滚并提示重导。不 commit。
     """
+    if is_already_baselined(session_row.status):
+        # 幂等：已 BASELINE 的会话重复提交 → 直接返回既有基线，不重复建立（spec「已建基准
+        # 会话幂等返回」、dedup.is_already_baselined）。不迁状态、不写任何行 —— 基线已经
+        # 建过，再走 IMPORTING 会撞状态机守卫（409），而幂等语义要求的是 200 返回既有结果。
+        return session_row
+
     session_row.status = assert_import_transition(session_row.status, ImportStatus.IMPORTING)
     db.flush()
 
