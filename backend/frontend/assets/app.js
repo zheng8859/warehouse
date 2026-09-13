@@ -11,6 +11,41 @@ document.querySelectorAll('nav a[data-tab]').forEach(a => {
   if (a.dataset.tab === PAGE) a.classList.add('active');
 });
 
+// 角色菜单可见性矩阵（13 号 §3.1：仓管员 7 / 计划员 4 / 主管 6 / 管理员 8）
+// 角色取值 = 13 号 §一 枚举，不自行造名
+const MENU = {
+  warehouse_keeper: ['p1','p2','p3','p4','p5','p6','p8'],
+  planner:         ['p1','p2','p6','p8'],
+  supervisor:      ['p1','p4','p5','p6','p7','p8'],
+  admin:           ['p1','p2','p3','p4','p5','p6','p7','p8']
+};
+
+// 当前角色：从 sessionStorage 读；未登录（如登录页）返回 null → 不过滤
+function getRole() {
+  return sessionStorage.getItem('role');
+}
+
+// 按角色过滤左侧导航（v1 前端过滤，不取代后端 RBAC，不拦截直接 URL 访问）
+function applyMenuFilter() {
+  const role = getRole();
+  if (!role || !MENU[role]) return;   // 未登录 / 未知角色 → 显示全部 8 项
+  const visible = MENU[role];
+  document.querySelectorAll('nav a[data-tab]').forEach(a => {
+    a.classList.toggle('hidden', !visible.includes(a.dataset.tab));
+  });
+  // 收起被清空的组标签（.grp / .nt），避免孤立组标签
+  document.querySelectorAll('nav .grp, nav .nt').forEach(g => {
+    let el = g.nextElementSibling, hasVisible = false;
+    while (el && !el.classList.contains('grp') && !el.classList.contains('nt')) {
+      if (el.tagName === 'A' && !el.classList.contains('hidden')) { hasVisible = true; break; }
+      el = el.nextElementSibling;
+    }
+    g.classList.toggle('hidden', !hasVisible);
+  });
+}
+
+applyMenuFilter();
+
 // 配置页二级子导航切换（24 号 Step 7）
 const cNav = document.querySelectorAll('.cf-subnav button[data-ctab]');
 const cPanels = document.querySelectorAll('#p7 [id^="c"]');
@@ -26,6 +61,7 @@ const loginBtn = document.getElementById('loginBtn');
 const loginErr = document.getElementById('loginErr');
 const loginUser = document.getElementById('loginUser');
 const loginPwd = document.getElementById('loginPwd');
+const loginRole = document.getElementById('loginRole');
 if (loginBtn) {
   loginBtn.addEventListener('click', () => {
     const u = loginUser.value.trim();
@@ -38,6 +74,7 @@ if (loginBtn) {
       return;
     }
     loginErr.classList.remove('show');
+    sessionStorage.setItem('role', loginRole ? loginRole.value : 'admin');
     loginBtn.textContent = '登录中…';
     loginBtn.disabled = true;
     setTimeout(() => {
