@@ -123,6 +123,40 @@ def test_confirm_inbound_success(session: Session) -> None:
     assert _qty_at(session, scenario.snapshot.id, "010104") == 40
 
 
+def test_confirm_inbound_uses_actual_qty_in_ledger(session: Session) -> None:
+    """台账数量按**实际执行量**：`actual_qty` 与计划量不同时，台账 / cap 增量取 actual_qty。"""
+    operator = _operator(session)
+    scenario = make_scenario(
+        session,
+        job_orders=[
+            JobOrderSpec(
+                order_no="PO-01",
+                material_code=MATERIAL,
+                qty=40,
+                batch_no=BATCH,
+                job_type=JobType.INBOUND,
+                status=JobStatus.PLANNED,
+            )
+        ],
+    )
+    order = scenario.job_orders[0]
+
+    confirm_inbound(
+        session,
+        job_order=order,
+        operator_id=operator.id,
+        executed_at=NOW,
+        target_location_code="010104",
+        actual_qty=30,  # 实际只入了 30，计划是 40
+        snapshot=scenario.snapshot,
+    )
+
+    assert order.actual_qty == 30
+    ledger = _ledgers(session, order)[0]
+    assert ledger.qty == 30  # 台账记实际执行量，不是计划量
+    assert _qty_at(session, scenario.snapshot.id, "010104") == 30  # cap 增量同源
+
+
 def test_confirm_outbound_success(session: Session) -> None:
     """出库确认：有源无目标台账 + 源库位 cap 减量。"""
     operator = _operator(session)

@@ -74,7 +74,10 @@ def write_ledger(
         material_code=job_order.material_code,
         material_name=job_order.material_name,
         batch_no=job_order.batch_no,
-        qty=job_order.qty,
+        # 台账数量按**实际执行量**（17 §4.1 `actual_qty`）：有 actual_qty 用 actual_qty，
+        # 缺省回落计划量 `qty` —— 确认编排在写台账前已把 `actual_qty` 落到作业单上
+        # （`confirm._confirm_and_execute`），冲正反向行读的也是同一列、同一口径。
+        qty=job_order.actual_qty if job_order.actual_qty is not None else job_order.qty,
         source_location_code=source_location_code,
         target_location_code=target_location_code,
         pick_path_json=pick_path_json,
