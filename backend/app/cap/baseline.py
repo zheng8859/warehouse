@@ -55,6 +55,7 @@ __all__ = [
     "aggregate_aisle_caps",
     "establish_baseline",
     "next_snapshot_version",
+    "recompute_snapshot_caps",
 ]
 
 #: 近站台预留带比例（16 §6.1 / design.md D5；与 `Settings.reserve_ratio` 同值）。
@@ -229,3 +230,52 @@ def establish_baseline(
         session.expire(import_session)
         raise
     return snapshot
+
+
+def recompute_snapshot_caps(
+    session: Session,
+    *,
+    snapshot: Snapshot,
+    reserve_ratio: float = DEFAULT_RESERVE_RATIO,
+) -> list[AisleCap]:
+    """对**已有快照**的 cap 就地重算（漂移校正，16 §6.4「以快照重算值为准」）。
+
+    与 `establish_baseline` 的区别：后者「新建快照 + 建 cap」，本函数「同一快照已存在，
+    把它的 `AisleCap` 按快照库位去重再算一遍」。用于校正被手工 / 程序改坏的 cap
+    （漂移），**不产生新快照版本、不迁移会话状态** —— 快照是权威，重算只把派生值拉回
+    权威口径。
+
+    保留既有 `is_near_station` 三态（NULL 仍是 NULL）：那是巷道主数据属性，不随 cap
+    数值重算而变 —— 只有 cap_physical/total/reserved/usable 由快照重算。
+
+    旧 `AisleCap` 先 `delete` + `flush` 再写新行：新行与旧行同 `(warehouse_id,
+    snapshot_id, aisle_no)`，SQLAlchemy 默认 INSERT 先于 DELETE 落库，会在唯一约束上
+    撞自己。不 `commit`，事务边界属于调用方。
+    """
+    items = list(
+        session.scalars(select(InventoryItem).where(InventoryItem.snapshot_id == snapshot.id))
+    )
+    near = {
+        cap.aisle_no: cap.is_near_station
+        for cap in session.scalars(select(AisleCap).where(AisleCap.snapshot_id == snapshot.id))
+    }
+    old_caps = list(
+        session.scalars(select(AisleCap).where(AisleCap.snapshot_id == snapshot.id))
+    )
+
+    caps = aggregate_aisle_caps(
+        items,
+        warehouse_id=snapshot.warehouse_id,
+        snapshot_id=snapshot.id,
+        reserve_ratio=reserve_ratio,
+        is_near_station=near,
+    )
+
+    for old in old_caps:
+        session.delete(old)
+    session.flush()  # 先清旧行，再写新行（避免唯一约束撞自己，见 docstring）。
+
+    session.add_all(caps)
+    snapshot.cap_snapshot_json = _cap_snapshot_json(snapshot, caps)
+    session.flush()
+    return caps
