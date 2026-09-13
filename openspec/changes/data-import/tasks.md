@@ -10,7 +10,7 @@
 
 ## 2. 8 步管线模块（app/importer/）
 
-- [ ] 2.1 落地 `detect.py`：格式（xlsx/csv）与编码（UTF-8/UTF-8-BOM/GBK）探测，无法识别即阻断；先写 `tests/logic/test_import_detect.py` 覆盖三类编码与非法格式，验证通过
+- [x] 2.1 落地 `detect.py`：格式（xlsx/csv）与编码（UTF-8/UTF-8-BOM/GBK）探测，无法识别即阻断；先写 `tests/logic/test_import_detect.py` 覆盖三类编码与非法格式，验证通过
 - [ ] 2.2 落地 `loaders.py`：xlsx/csv 解析成行，库位号按 6 位文本读取（前导 0 不丢、日期序列号转日期），严禁按列序号硬取；先写 `tests/logic/test_import_loaders.py` 覆盖文本库位号与日期转换，验证通过
 - [ ] 2.3 落地 `mapping.py`：GTJ10036 单厂内置字段映射（别名/去空格/全半角/大小写容错），字段命中率 100% 未命中即阻断；先写 `tests/logic/test_import_mapping.py` 覆盖别名与全半角匹配、缺失列阻断，验证通过
 - [ ] 2.4 落地 `validate.py`：四层校验（结构/字段/时点/业务），选填缺失降级不阻断；先写 `tests/logic/test_import_validate.py` 覆盖数量 ≤0、批号空、库位号非 6 位、状态非法各阻断 + 选填缺失降级，验证通过
