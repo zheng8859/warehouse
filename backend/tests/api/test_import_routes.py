@@ -279,3 +279,36 @@ def test_partial_failure_isolates_inv(job_api) -> None:
     with job_api.factory() as db:
         assert len(tuple(db.scalars(select(JobOrder)))) == 2
         assert tuple(db.scalars(select(Snapshot))) == ()
+
+
+# ------------------------------------------------------------------ 异常路径（tasks 7.1）
+
+def test_create_session_missing_data_time_422(job_api) -> None:
+    """时点缺失 → 422（`data_time` 必填，不得静默兜底当天，spec「时点缺失阻断」）。"""
+    resp = job_api.client.post(
+        "/api/import/session", json={"warehouse_id": WAREHOUSE}, headers=job_api.headers
+    )
+    assert resp.status_code == 422
+
+
+def test_validate_unrecognized_format_fails(job_api) -> None:
+    """格式不可识别（.txt）→ 校验落 FAILED（格式探测阻断，不猜测，spec「格式或编码不可识别阻断」）。"""
+    client, headers = job_api.client, job_api.headers
+    session_no = _create_session(client, headers=headers)
+    _upload(client, headers=headers, session_no=session_no, file_type="INV", filename="INV.txt", text="not-a-table")
+    resp = _validate(client, headers=headers, session_no=session_no)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "FAILED"
+
+
+def test_validate_missing_required_column_fails(job_api) -> None:
+    """缺必填列（库位号）→ 字段命中 <100% → 校验落 FAILED（spec「字段未 100% 命中阻断」）。"""
+    client, headers = job_api.client, job_api.headers
+    session_no = _create_session(client, headers=headers)
+    missing_loc = "仓库号,料号,品名,批号,状态,数量,库存记录时间\nGTJ10036,3001234,PET500 茉莉柚茶,B001,合格,40,2026-09-08 00:00:00\n"
+    _upload(client, headers=headers, session_no=session_no, file_type="INV", filename="INV.csv", text=missing_loc)
+    resp = _validate(client, headers=headers, session_no=session_no)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "FAILED"
+    assert body["receipt"]["failed_files"] == 1
