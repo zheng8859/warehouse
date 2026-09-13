@@ -19,6 +19,7 @@
 
 **Non-Goals（设计级边界，非 proposal 复述）:**
 - 不做 cap 基线全量重算 / 漂移对账 / 告警（`app/cap/baseline.py` / `reconcile.py` / `alerts.py` 留待 4b）。
+- `VERIFY_FAILED` 的「告警」通道（KPI 看板 / 偏离告警推送）留待阶段六 —— 本 change 只落「重试」边（`VERIFY_FAILED → VERIFYING`）与 `Deviation` 标记作为告警输入。
 - 不引入任务队列 / 异步 worker（保持单进程无中间件）。
 - 不做端点级 RBAC 落地（M5 路线图，见 D6）。
 
@@ -44,7 +45,7 @@
 
 ### D2：后验同步（D3），VERIFYING 为内部中间态
 
-确认请求内一次完成 `CONFIRMED → EXECUTED（写台账）→ VERIFYING → VERIFIED / VERIFY_FAILED`：后验在台账写入成功后同请求同步计算，请求结束时单子必为 `VERIFIED` 或 `VERIFY_FAILED`，`VERIFYING` 不暴露为可停留状态。`VERIFY_FAILED`（后验计算失败 / 超时）仅提供重试（→ `VERIFYING`）+ 告警，无「放弃后验」终态。
+确认请求内一次完成 `CONFIRMED → EXECUTED（写台账）→ VERIFYING → VERIFIED / VERIFY_FAILED`：后验在台账写入成功后同请求同步计算，请求结束时单子必为 `VERIFIED` 或 `VERIFY_FAILED`，`VERIFYING` 不暴露为可停留状态。`VERIFY_FAILED`（后验计算失败 / 超时）仅提供重试（→ `VERIFYING`）；「告警」通道留待阶段六（见 Non-Goals），无「放弃后验」终态。
 
 **备选**：异步后验（`VERIFYING` 停留、后台任务推进）。否决 —— 无 Redis/RabbitMQ、任务队列用本地库状态表，异步需额外调度器与「谁在跑」的恢复逻辑；而 SLA「后验 ≤1s」在同步下可满足（`08` §14.1）。同步也把「后验在确认回执里即可读」落成真。
 
@@ -63,6 +64,8 @@
 
 `app/cap/increment.py` 的板-格换算复用 `app/engine/allocator.py::to_occupied_cells(qty, cartons_per_pallet=None)`，与分配侧同一口径：入库 ↑已占、出库 ↓已占、移库源 ↓ / 目标 ↑，与台账同事务写入。**D14 板-格换算规则仍未确认**，恒等占位是明确选择 —— 引擎「占几格」与 cap「扣几格」必须一致，否则「台账是 cap 增量唯一来源」会被换算口径差异偷偷打破。
 
+**增量载体是 `InventoryItem`（库存分布），不写 `AisleCap`**：`AisleCap` 是快照时刻的冻结值（`app/models/linkage.py` 类 docstring「事务内增量不落本表」），已占格数随库存分布增减隐式变化、由 4b 的全量重算 / 对账在快照层固化。与 `16` §6.3「增量落 `AisleCap`」的差异**登记为本设计偏离**（`increment.py` 模块 docstring 已按此口径）。
+
 全量重算（快照导入 `IMPORTED → BASELINE`）与漂移对账 / 告警归 4b，本 change **不实现**；此处显式登记「不适用」而非静默删除（跨阶段 rules 冲突，见记忆条目）。
 
 ### D5：服务层编排 —— 六模块 + 单事务
@@ -75,9 +78,11 @@
 
 编排在一个 DB 事务内：`status 推进 → 写台账 → cap 增量 → 后验记录（→ 偏离记录）`，任何一步失败整体回滚（`CONFIRMED` 回 `PLANNED`，确认作废）。后验计算本身是纯函数（同样输入必得同样输出），无随机、无 LLM。
 
+**口径偏离登记（v1）**：出库加权集中度在 v1 是**逐单粒度** —— 一张作业单 = 一张 DO 的一行 = 一个源库位，`_pick_qty_from_ledger` 只取到一条巷道、集中度恒为 1 → 恒 `PASS`。「80% 落在 ≤N 巷道」只有跨一张 DO 的多行累计才有意义，那张 DO 的聚合属批量确认 / KPI（阶段六）。这是粒度选择（登记为偏离），不是计量 bug —— v1 至少保证出库后验可落、可查（`verify.py` 模块 docstring 已按此口径）。
+
 ### D6：API 端点与二次确认、RBAC 现状
 
-写路径：`POST /api/job/batch/confirm`、`POST /api/job/{id}/reject`、`POST /api/job/{id}/retry`（后验重试）、`POST /api/job/{id}/void`（冲正）。验证读：`GET /api/ledger`、`GET /api/verification/{job_id}`。路径按本仓 `/api/*` 约定（无 `/api/v1`），与 `15-01` §5.1 的 `/api/v1/jobs/*` 不一致处以 config.yaml 为准。
+写路径：`POST /api/job/batch/confirm`、`POST /api/job/{id}/reject`、`POST /api/job/{id}/retry`（后验重试）、`POST /api/job/{id}/void`（冲正）。验证读：`GET /api/ledger`、`GET /api/verification/{job_id}`、`GET /api/deviation`（偏离批次清单，移库任务来源）。路径按本仓 `/api/*` 约定（无 `/api/v1`），与 `15-01` §5.1 的 `/api/v1/jobs/*` 不一致处以 config.yaml 为准。
 
 二次确认（G3）是前端守卫（阶段七已建）：后端写端点**即**操作员显式确认入口，无「自动落位 / 静默执行」路径，故「未确认不产生台账」由「不存在自动写台账的路径」成立。resource.action 映射登记为 `inbound.operate` / `outbound.operate` / `relocate.operate`（13 号矩阵目标模型）；**v1 事实**：端点级 RBAC 仅 `/api/allocate/batch` 已落地，本 change 不新增端点鉴权，仅保留映射供 M5 落地。
 
