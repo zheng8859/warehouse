@@ -40,10 +40,10 @@
 
 ## 6. L3 质量层（16+ 道，验收口径 + 冷路径观测，非百分比门槛）
 
-- [ ] 6.1 写 `evals/l3_quality/test_l3_concentration.py`（集中度趋势 5 道：`golden_050` 达成率≥70% 判定）；验证：`golden_050` 判定正确
-- [ ] 6.2 写 `evals/l3_quality/test_l3_relocate.py`（移库有效 4 道：`golden_055` 移库后跨巷道下降）；验证：`golden_055` 达标
-- [ ] 6.3 写 `evals/l3_quality/test_l3_perf.py`（性能基线 4 道：`golden_058` 大队列批量分配 P95<阈值）；验证：P95 断言通过
-- [ ] 6.4 写 `evals/l3_quality/test_l3_kpi_baseline.py`（KPI 基线达标 3 道：同物料≤5/同批≤3 `golden_060`）+ 冷路径观测（4 能力抽样，覆盖/误导/采纳率，非闸门）；验证：观测项不进入 `pass_rate`
+- [x] 6.1 写 `evals/l3_quality/test_l3_concentration.py`（集中度趋势 5 道：`golden_050` 达成率≥70% 判定）；验证：`golden_050` 判定正确
+- [x] 6.2 写 `evals/l3_quality/test_l3_relocate.py`（移库有效 4 道：`golden_055` 移库后跨巷道下降）；验证：`golden_055` 达标
+- [x] 6.3 写 `evals/l3_quality/test_l3_perf.py`（性能基线 4 道：`golden_058` 大队列批量分配 P95<阈值）；验证：P95 断言通过
+- [x] 6.4 写 `evals/l3_quality/test_l3_kpi_baseline.py`（KPI 基线达标 3 道：同物料≤5/同批≤3 `golden_060`）+ 冷路径观测（4 能力抽样，覆盖/误导/采纳率，非闸门）；验证：观测项不进入 `pass_rate`
 
 ## 7. run_evals CLI
 

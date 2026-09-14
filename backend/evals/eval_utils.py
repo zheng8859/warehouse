@@ -36,6 +36,9 @@ __all__ = [
     "normalize_weights",
     "select_degrade",
     "assert_no_pii",
+    "attainment_rate",
+    "judge_attainment",
+    "trend",
 ]
 
 
@@ -109,3 +112,37 @@ def assert_no_pii(payload: Mapping[str, Any]) -> dict[str, Any]:
 
     _walk(out)
     return out
+
+
+# ---------------------------------------------------------------------------
+# L3 验收口径判定（18 §7.5 / 20号 Go-No-Go 闸门）—— run_evals 的 Go/No-Go 与本文件同源。
+# ---------------------------------------------------------------------------
+
+
+def attainment_rate(concentrations: Iterable[int], *, n_max: int = 5) -> float:
+    """集中度达成率（18 §7.5）：N ≤ n_max 的出库单占比，目标 ≥70%。
+
+    `concentrations` = 每张出库单的加权集中度 N（`weighted_concentration` 逐单结果）。
+    空输入 → 0.0（零样本不是 100% 的虚高，与 `adoption_rate` 同口径）。
+    """
+    vals = list(concentrations)
+    if not vals:
+        return 0.0
+    return sum(1 for n in vals if n <= n_max) / len(vals)
+
+
+def judge_attainment(rate: float, *, min_rate: float = 0.70) -> bool:
+    """达成率阈值判定（18 §7.5 / 20号 Go/No-Go）：rate ≥ min_rate → Go（True），否则 No-Go。"""
+    return rate >= min_rate
+
+
+def trend(current: float, previous: float, *, higher_is_better: bool = True) -> str:
+    """趋势判定（20号 §7.5 趋势向好）：返回 `better` / `no_regression` / `worse`。
+
+    `higher_is_better=True` 用于达成率 / 采纳率（越高越好）；`False` 用于跨巷道数 / 耗时
+    （越低越好）。相等判 `no_regression`（不劣化也算过闸，`comparison: no_regression`）。
+    """
+    if current == previous:
+        return "no_regression"
+    is_better = current > previous if higher_is_better else current < previous
+    return "better" if is_better else "worse"

@@ -20,6 +20,7 @@ markers = [
     "l2: Evals L2 集成层（API 行为，≥90%）",
     "l3: Evals L3 质量层（验收口径 + 趋势判定，非百分比门槛）",
     "slow: Evals 慢测（性能基线，仅 --run-slow 时纳入）",
+    "observation: Evals 冷路径观测（4 能力抽样，独立统计、不进 pass_rate）",
 ]
 
 [tool.coverage.run]
