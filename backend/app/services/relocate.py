@@ -13,9 +13,11 @@
 """
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -25,6 +27,13 @@ from app.models.job import JobOrder
 from app.models.linkage import Snapshot
 from app.services.confirm import _confirm_and_execute
 from app.services.verify import run_verification
+
+#: ④ 移库多方案的代价模型常数（doc 10 §六 示例反推）：15 板/车次、5 车次/小时。
+#: 属「辅助参考」（冷路径产物「辅助参考，不是精确诊断」），只用于多方案对比的代价估算，
+#: 不是落位决策的精确成本。板-格换算与车次口径本阶段未定（CLAUDE.md §十一 D14 待确认项），
+#: 这里从示例值反推一个确定性的估算口径。
+PLATES_PER_TRIP = 15
+TRIPS_PER_HOUR = 5
 
 
 @dataclass(frozen=True)
@@ -186,6 +195,85 @@ def derive_consolidation_plan(
             f"次选巷道 {second_aisle} 亦不可行（{second_message}），移出批量"
         )
     )
+
+
+def build_relocate_plans(
+    *,
+    plates_by_aisle: Mapping[str, int],
+    available: Mapping[str, int],
+    cross_aisle_threshold: int = 5,
+) -> dict[str, Any]:
+    """④ 移库多方案（规则算、纯函数、确定性）：激进 / 均衡 / 保守 三档 + 量化代价 + 三重校验。
+
+    事实来源：10-AI 辅助能力设计 §六（④ 多方案对比 + 量化代价，LLM 只叙事）
+              openspec/changes/ai-assist/design.md D8（多方案规则算，复用三重校验）
+
+    输入 = 物料级板数分布（`plates_by_aisle`）+ 各巷可用格数（`available`），输出三档
+    收拢方案的**试算**（不触会话、不写 `JobOrder`）。三档按「激进程度」递减：
+
+    - **激进**：全部收拢到前二巷道（主巷 + 次选，与 `_target_candidates` 同源），
+      跨巷道数最小、搬移量最大 —— 过度达成 ≤阈值，代价最高。
+    - **均衡（推荐）**：收拢到前 `cross_aisle_threshold` 巷道，**恰好达成**同物料跨巷道
+      ≤阈值的验收指标（`18` §十 的统一指标 `same_material_cross_aisle_max`），搬移量适中。
+    - **保守**：只清长尾（板数最少的后 `max(1, n//3)` 条巷道），搬移量最小，
+      可能**未达** ≤阈值。
+
+    三重校验（与 `_consolidate_to` 同口径，`17` §10.3 的移库方案三判据）：
+
+    ① cap 充足 —— 目标巷道可用格数之和 ≥ 待搬板数；
+    ② 批号不变 —— 移库不改批号（红线），结构性恒真；
+    ③ 集中度改善 —— 收拢后跨巷道数 < 收拢前。
+
+    `valid = ① and ② and ③`。量化代价（板数 / 车次 / 时长）用 §六 示例反推的估算口径
+    （`PLATES_PER_TRIP` / `TRIPS_PER_HOUR`），属「辅助参考，不是精确诊断」，只用于三档
+    对比，不是落位决策的精确成本。
+    """
+    ranked = sorted(plates_by_aisle.items(), key=lambda kv: (-kv[1], kv[0]))
+    n = len(ranked)
+    total = sum(plates_by_aisle.values())
+
+    aggressive_keep = min(2, n)
+    balanced_keep = min(cross_aisle_threshold, n)
+    # 只清长尾 = 清掉板数最少的后三分之一巷道（至少 1 条）；夹取下界保证「保守」不比
+    # 「均衡」更激进（两者在 n 较小时重合，属正常 —— 分布太散没有第三档的空间）。
+    conservative_keep = max(balanced_keep, min(n, n - max(1, n // 3)))
+
+    plans: list[dict[str, Any]] = []
+    for name, keep_count in (("激进", aggressive_keep), ("均衡", balanced_keep), ("保守", conservative_keep)):
+        keep = [aisle for aisle, _ in ranked[:keep_count]]
+        clear = [aisle for aisle, _ in ranked[keep_count:]]
+        plates_to_move = sum(plates_by_aisle[a] for a in clear)
+        cross_before, cross_after = n, keep_count
+
+        cap_ok = sum(available.get(a, 0) for a in keep) >= plates_to_move
+        batch_unchanged = True  # 移库不改批号（红线），结构性恒真。
+        concentration_improved = cross_after < cross_before
+
+        trips = math.ceil(plates_to_move / PLATES_PER_TRIP) if plates_to_move else 0
+        plans.append(
+            {
+                "name": name,
+                "target_aisles": keep,
+                "clear_aisles": clear,
+                "cross_aisle": {"before": cross_before, "after": cross_after},
+                "plates_to_move": plates_to_move,
+                "trips": trips,
+                "hours": round(trips / TRIPS_PER_HOUR, 1),
+                "cap_ok": cap_ok,
+                "batch_unchanged": batch_unchanged,
+                "concentration_improved": concentration_improved,
+                "valid": cap_ok and batch_unchanged and concentration_improved,
+            }
+        )
+
+    return {
+        "current": {
+            "aisles": [aisle for aisle, _ in ranked],
+            "cross_aisle": n,
+            "plates": total,
+        },
+        "plans": plans,
+    }
 
 
 def confirm_relocate(

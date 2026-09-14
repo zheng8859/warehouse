@@ -28,14 +28,17 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, time
 from typing import Any
 
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
+from app.core.config_version import pick_current_version
 from app.core.enums import JobType
+from app.engine.factors import load_snapshot_index
+from app.engine.reserved import available_cap
 from app.engine.scoring import load_weights
 from app.llm import DegradedReason, client
 from app.llm.client import Backend
@@ -48,11 +51,13 @@ from app.llm.quota import (
     record_tokens,
 )
 from app.llm.redact import redact
-from app.models.configuration import Capability
+from app.models.configuration import Capability, CapacityConfig
 from app.models.job import Deviation, DeviationCauseKind, JobOrder, RecommendationPlan
 from app.models.llm import AiSuggestion, AiSuggestionStatus
-from app.models.linkage import InventoryItem, Snapshot
+from app.models.linkage import AisleCap, InventoryItem, Snapshot
+from app.models.master_data import Material
 from app.services.kpi import same_material_cross_aisle_mean
+from app.services.relocate import build_relocate_plans
 from app.services.weight_tune import (
     MIN_WEIGHT_TUNE_SAMPLES,
     build_counterfactual,
@@ -499,4 +504,109 @@ def weight_tune(
         ai=result.ai,
         ai_generated=result.ai_generated,
         degraded_reason=result.degraded_reason,
+    )
+
+
+# ---------------------------------------------------------------------------
+# ④ 移库方案（只读，P1）—— 规则算多方案 + 量化代价 + 三重校验 → LLM 只叙事。
+# ---------------------------------------------------------------------------
+
+
+def relocate_propose(
+    session: Session,
+    *,
+    warehouse_id: str,
+    material_code: str,
+    settings: Settings | None = None,
+    period: str | None = None,
+    now: datetime | None = None,
+    gate: ConcurrencyGate | None = None,
+    backend: Backend | None = None,
+    timeout_s: float | None = None,
+) -> DualProduct:
+    """④ 移库方案：规则算多方案（激进/均衡/保守）+ 量化代价 + 三重校验 → LLM 只叙事。**只读**。
+
+    规则侧 = `build_relocate_plans`（纯函数，D8「多方案规则算」）：读最新快照的物料级
+    板数分布 + 各巷可用格数，产出三档收拢**试算**（不落库、不写 `JobOrder`）。LLM 只做
+    「权衡利弊」叙事，数字永远来自规则（红线「规则算、LLM 只叙事」）。
+
+    落地走 `relocate.operate` 二次确认（D8 复用 G3），本函数**不写台账** —— 未经确认
+    不产生 `JobOrder`（红线 2「LLM 不直接执行写操作」）。可用格数口径随物料 ABC
+    （`available_cap`，与入库分配同源），阈值与释放钟点读 `CapacityConfig`、缺席退回
+    `Settings` 引导值（与 `allocate._load_capacity_settings` 同口径）。
+    """
+    settings = settings if settings is not None else Settings()
+    period = period if period is not None else datetime.now().strftime("%Y-%m")
+    now = now if now is not None else datetime.now()
+
+    sid = _latest_snapshot_id(session, warehouse_id=warehouse_id)
+    plates_by_aisle: dict[str, int] = {}
+    if sid is not None:
+        plates_by_aisle = dict(
+            load_snapshot_index(session, snapshot_id=sid)
+            .profile(material_code)
+            .plates_by_aisle
+        )
+
+    abc_class = session.scalar(
+        sa.select(Material.abc_class).where(
+            Material.warehouse_id == warehouse_id,
+            Material.material_code == material_code,
+        )
+    )
+    config_row = pick_current_version(
+        session.scalars(
+            sa.select(CapacityConfig).where(CapacityConfig.warehouse_id == warehouse_id)
+        ),
+        now=now,
+    )
+    release_at = (
+        config_row.reserved_release_at
+        if config_row is not None
+        else time.fromisoformat(settings.reserve_release_at)
+    )
+    threshold = (
+        config_row.same_material_cross_aisle_threshold
+        if config_row is not None
+        else settings.same_material_cross_aisle_max
+    )
+
+    available: dict[str, int] = {}
+    if sid is not None:
+        cap_rows = {
+            cap.aisle_no: cap
+            for cap in session.scalars(
+                sa.select(AisleCap).where(
+                    AisleCap.warehouse_id == warehouse_id,
+                    AisleCap.snapshot_id == sid,
+                )
+            )
+        }
+        available = {
+            aisle: (
+                0
+                if (cap := cap_rows.get(aisle)) is None
+                else available_cap(
+                    cap=cap, abc_class=abc_class, release_at=release_at, now=now
+                )
+            )
+            for aisle in plates_by_aisle
+        }
+
+    plans = build_relocate_plans(
+        plates_by_aisle=plates_by_aisle,
+        available=available,
+        cross_aisle_threshold=threshold,
+    )
+    rule: dict[str, Any] = {"material_code": material_code, "metrics": plans}
+
+    return run_cold_path(
+        settings=settings,
+        session=session,
+        warehouse_id=warehouse_id,
+        period=period,
+        rule=rule,
+        gate=gate,
+        backend=backend,
+        timeout_s=timeout_s,
     )
