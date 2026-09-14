@@ -58,3 +58,4 @@ node_modules/
 # ---- Claude Code 本机专属配置（文件名带 .local，换机无意义）----
 # 注意：.claude/skills/ 与 .claude/commands/ 是 OpenSpec 集成，属项目配置，要入库。
 .claude/settings.local.json
+.gstack/
