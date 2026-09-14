@@ -1,0 +1,41 @@
+# Evals CI —— 事实来源：30-Evals评测体系 §6.4；design.md D9。
+#
+# 本文件是**参考物**：本机 github.com 不通、`gh` 未装，真正生效的门禁是
+# `.pre-commit-config.yaml` 的 `evals-baseline` pre-push 钩子（经 no-mistakes 本地流水线）。
+# 此 workflow 按 30号 §6.4 交付清单写成，供接入 GitHub Actions 的镜像仓库直接使用。
+#
+# 双轨：
+#   l1-gate   —— L1 单元通过率 <95% 阻断（退出码非 0 即失败）
+#   l2-l3     —— L2 + L3 + 基线对比：劣化 >5% 阻断 / 3~5% 告警 / ≤3% 记录（同一退出码）
+name: Evals CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  evals:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: L1 单元门禁（通过率 ≥95%，否则阻断）
+        run: python evals/run_evals.py --tier l1
+
+      - name: L2 集成 + L3 质量 + 基线对比（劣化 >5% 阻断 / 3~5% 告警）
+        run: python evals/run_evals.py --tier all --compare evals/baseline.json

@@ -47,15 +47,15 @@
 
 ## 7. run_evals CLI
 
-- [ ] 7.1 替换 `evals/run_evals.py`（`--tier`/`--dimension`/`--compare`/`--save-baseline`/`--run-slow`/`--json`，subprocess 调 pytest 解析 `-q` 汇总行得通过率，路径以 `Path(__file__)` 锚定）；验证：`--list` 列三层、`--tier l1` 输出通过率与退出码
-- [ ] 7.2 劣化检测分流（≤3% 记录 / 3–5% 告警 / >5% 阻断）+ P0 护栏（台账完整性/决策可追溯/出域>0）立即阻断；验证：构造 >5% 劣化基线对比以失败退出码返回
-- [ ] 7.3 `--save-baseline` 回填 `baseline.json`（`tiers.*.pass_rate` + `baseline_captured`，拒绝基线下调）；验证：保存后 `baseline.json` 有实测通过率
+- [x] 7.1 替换 `evals/run_evals.py`（`--tier`/`--dimension`/`--compare`/`--save-baseline`/`--run-slow`/`--json`，subprocess 调 pytest 解析 `-q` 汇总行得通过率，路径以 `Path(__file__)` 锚定）；验证：`--list` 列三层、`--tier l1` 输出通过率与退出码
+- [x] 7.2 劣化检测分流（≤3% 记录 / 3–5% 告警 / >5% 阻断）+ P0 护栏（台账完整性/决策可追溯/出域>0）立即阻断；验证：构造 >5% 劣化基线对比以失败退出码返回
+- [x] 7.3 `--save-baseline` 回填 `baseline.json`（`tiers.*.pass_rate` + `baseline_captured`，拒绝基线下调）；验证：保存后 `baseline.json` 有实测通过率
 
 ## 8. CI 门禁
 
-- [ ] 8.1 取消注释 `.pre-commit-config.yaml` 的 `evals-baseline` pre-push 钩子；验证：`pre-commit run evals-baseline --hook-stage push` 可执行
-- [ ] 8.2 写 `.github/workflows/evals-ci.yml`（l1-gate 阻断 + l2-l3 劣化告警，参考物）；验证：YAML 语法合法
-- [ ] 8.3 改写 `tests/logic/test_run_evals.py` 为真实门禁断言（删 exit-3 骨架契约）；验证：`pytest tests/logic/test_run_evals.py` 通过
+- [x] 8.1 取消注释 `.pre-commit-config.yaml` 的 `evals-baseline` pre-push 钩子；验证：`pre-commit run evals-baseline --hook-stage push` 可执行
+- [x] 8.2 写 `.github/workflows/evals-ci.yml`（l1-gate 阻断 + l2-l3 劣化告警，参考物）；验证：YAML 语法合法
+- [x] 8.3 改写 `tests/logic/test_run_evals.py` 为真实门禁断言（删 exit-3 骨架契约）；验证：`pytest tests/logic/test_run_evals.py` 通过
 
 ## 9. 基线建立与全量验证
 
