@@ -85,8 +85,8 @@
 | 管理员 | Admin | 账号管理与系统配置的角色（`13 §一`） |
 | 账号 | Account | 用户名全局唯一 + 密码哈希 + 角色 + 状态；v1 本地账号，SSO 为路线图（`17 §6.1`） |
 | 账号状态 | Account Status | **lowercase**：`pending`（待激活）/ `active` / `disabled`（停用即凭据失效）（`17 §九`） |
-| 权限 | Permission | `resource.action` 形式的 17 项标识，如 `ledger.write`、`engine.invoke`（`13 §2.1`） |
-| 权限矩阵 | ROLE_PERMISSIONS | 4 角色 × 17 权限的目标模型；**v1 未实现细粒度 RBAC**，矩阵定义见 `app/api/permissions.py`（`13 §2.2`） |
+| 权限 | Permission | `resource.action` 形式的 21 项标识，如 `ledger.write`、`engine.invoke`、`ai.assist`（`13 §2.1`、`10`） |
+| 权限矩阵 | ROLE_PERMISSIONS | 4 角色 × 21 权限的目标模型；**v1 未实现细粒度 RBAC**，矩阵定义见 `app/api/permissions.py`（`13 §2.2`） |
 | 自动权限 | AUTO_ONLY | `ledger.write` / `engine.invoke` —— **不向任何角色开放手动入口**，仅引擎/作业流可触发（`17 §4.3`） |
 | 会话凭据 | Session Token | JWT（HS256），claims = `user_id`/`role`/`status`/`iat`/`exp`/`warehouse_id`；8 小时一班次（`13 §7.2`） |
 | 无状态会话 | Stateless Session | 无服务端 Session、无黑名单、无刷新；**吊销 = 置 `status=disabled`**（`13 §8.3`） |
@@ -174,9 +174,9 @@
 | 中文 | English | 一句话定义 |
 |---|---|---|
 | 对话式操作台 | Conversation Console | 承载推荐/入库/出库/移库/KPI 查询的确定性指令入口（`14 §7.1`） |
-| 两层指令模型 | Two-Tier Command Model | L1 确定性指令 + L2 复杂问句（`15 §8.1`） |
-| L1 确定性指令 | L1 Deterministic Command | 参数化语句，本地规则解析，**不走 LLM**（`15 §8.3`） |
-| L2 复杂问句 | L2 Complex Query | 自然语言，**意图识别走外部 LLM**（脱敏后）（`15 §8.2`） |
+| 两层指令模型 | Two-Tier Command Model | L0 结构化入口 + L2 复杂问句（`15-05` §3.1） |
+| L0 结构化入口 | L0 Structured Entry | 固定按钮 `data-goto` 直达三类作业页，**不走 LLM**（`15-05` §3.1） |
+| L2 复杂问句 | L2 Complex Query | 自然语言，**意图识别走外部 LLM**（脱敏后）（`15-05` §3.3） |
 | 意图识别 | Intent Recognition | 把自然语言映射到确定性功能；技术分层可渐进（`14 §7.3`） |
 | 常用问句 chip | Prompt Chip | 点击即用的预置问句，回答「点更好还是输入更好」（`15 §8.4`） |
 | 写操作确认卡 | Write Confirmation Card | 对话台触发写操作**强制**弹确认卡，未确认不执行（`14 §7.4`） |
@@ -185,6 +185,9 @@
 | 数据不出域 | No Data Egress | **核心链路出域 + 未脱敏出域 = 0**；脱敏后的冷路径出域允许且不计护栏失败（`10 §七`） |
 | 成本护栏 | Cost Guardrail | 三道硬上限：单请求 token 上限 / 并发上限 / 月度预算熔断（`10 §七`） |
 | AI 建议标注 | AI Notice | 所有 LLM 输出须标注「AI 建议，仅供参考，需人工核实，不自动执行」（`10 §七`） |
+| AI 建议卡片 | AiSuggestion | 冷路径建议产物：`capability_kind` / 建议文本 / 采纳状态；只读、非台账（`15-05` §4.1） |
+| 对话日志 | ConversationLog | 问句原文 / 脱敏后文本 / LLM 产出 / 是否命中冷路径；`warehouse_id` 隔离、非台账（`15-05` §4.1） |
+| 成本配额 | AiCostQuota | 冷路径 token 月预算记账：`period` / `tokens_consumed` / `updated_at`；同步记账、可审计（`29`） |
 
 ---
 

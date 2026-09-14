@@ -149,7 +149,8 @@ context: |
 
   资源·动作标识：`account.manage`、`data_import.view|operate`、`inbound.view|operate`、
   `outbound.view|operate`、`relocate.view|operate`、`kpi.view`、`config.view|configure`、
-  `conversation.view|operate`、`ledger.view|write`、`engine.invoke`。
+  `conversation.view|operate`、`ledger.view|write`、`engine.invoke`、
+  `ai.assist`、`ai.weight.update`、`ai.relocate.propose`、`ai.toggle`。
   要点：主管仅 `relocate` 可执行、`config` 限权重子模块；`ledger.write` 与 `engine.invoke`
   对业务角色均不开放手动入口；免认证白名单 `/api/auth/login`、`/health`、`/docs`、`/openapi.json`。
 
@@ -162,8 +163,8 @@ context: |
   三条不可逾越红线：**LLM 不参与实时评分与排序**、**LLM 不直接执行写操作**、
   **LLM 产出不经规则校验不进台账**。所有 AI 输出必须渲染为琥珀色并标注
   「AI 建议，仅供参考，需人工核实，不自动执行」，**不得渲染成系统结论**。
-  对话台意图识别分层：L0 结构化入口（必做）→ L1 规则/模板匹配（推荐）→ L2 外部 LLM NLU（可选）
-  → **L3 自主规划型 Agent 不做**。
+  对话台意图识别分层：仅 L0（结构化入口，确定性）与 L2（外部 LLM NLU，脱敏）；
+  L1 规则/模板匹配层已取消（设计决策 10.7），L3 自主规划型 Agent 不做。
 
   ## 范围边界（不做清单，不得加回）
 
