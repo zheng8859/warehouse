@@ -156,7 +156,10 @@ async function api(path, options) {
     opts.headers['Content-Type'] = 'application/json';
     opts.body = JSON.stringify(opts.body);
   }
-  const resp = await fetch(path, opts);
+  // 后端所有业务端点都在 `/api` 前缀下（app/core/config.py 的 `api_prefix="/api"`）。
+  // 页面只传相对 API 路径（如 `/jobs`、`/import/session`、`/allocate/batch`），
+  // 这里统一补前缀，避免各页把 `/api` 散落成字面量；相对 `fetch` 也要求前后端同源。
+  const resp = await fetch('/api' + path, opts);
   const text = await resp.text();
   let data = null;
   if (text) { try { data = JSON.parse(text); } catch (e) { data = text; } }
