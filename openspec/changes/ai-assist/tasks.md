@@ -28,7 +28,7 @@
 
 ## 4. 对话台 L0/L2 意图
 
-- [ ] 4.1 意图识别（`{KPI_INTERPRET, DEVIATION_ATTRIBUTE, WEIGHT_TUNE, RELOCATE_PROPOSE}` + `slots` + `write_intent`，③④ 为 true）。验证：意图路由单测（读意图 `write_intent=false`、写意图 `write_intent=true`）。
+- [x] 4.1 意图识别（`{KPI_INTERPRET, DEVIATION_ATTRIBUTE, WEIGHT_TUNE, RELOCATE_PROPOSE}` + `slots` + `write_intent`，③④ 为 true）。验证：意图路由单测（读意图 `write_intent=false`、写意图 `write_intent=true`）。
 - [ ] 4.2 `routes/conversation.py` `POST /api/conversation/message`（L0 结构化 + L2 脱敏 LLM；写意图路由确认卡，不直接写台账）。验证：API 契约单测——写意图返回建议 + `write_intent=true` 且零台账。
 
 ## 5. API 端点与鉴权
