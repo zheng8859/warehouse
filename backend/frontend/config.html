@@ -34,7 +34,6 @@
 
   <main>
     <div class="sec-head"><h2>⑦ 配置页</h2><span class="sec-tag">管理员 · P0-F2</span></div>
-    <p class="sec-sub">配置页含 5 个子模块：导入模板、cap 口径、评分因子权重、近站台预留比例、对话指令词配置。子导航切换查看。</p>
 
     <div class="cf-subnav">
       <button class="active" data-ctab="c1">导入模板</button>
@@ -48,7 +47,6 @@
       <!-- 7.1 导入模板 -->
       <div id="c1">
         <div class="sec-head"><h2>① 导入模板</h2><span class="sec-tag">文件级衔接契约</span></div>
-        <p class="sec-sub">把 WMS/SAP 导出的三类文件约定成固定模板，让系统能稳定解析、校验、复用。模板持久化后同厂后续导入无需重配。</p>
 
         <div class="card">
           <h3>导入模板（三类必配 + BI 统计类）</h3>
@@ -102,14 +100,12 @@
             <div class="field"><label>时点缺失策略</label>
               <select><option>拒绝导入并提示（推荐）</option><option>取文件修改时间</option></select></div>
           </div>
-          <div class="note">"导入即基准"：推荐与 cap 均基于该时点快照。未标注时点须阻断导入，不得带病入库。</div>
         </div>
       </div>
 
       <!-- 7.2 cap 口径 -->
       <div id="c2" class="hidden">
         <div class="sec-head"><h2>② cap 口径</h2><span class="sec-tag">P0-F9 巷道容量自维护</span></div>
-        <p class="sec-sub">定义每条巷道的"剩余可放板数"怎么算、怎么随事务增量维护。cap 由期初库存快照建基线（仅期初一次），随入库/出库/移库事务增量更新，是评分引擎的可竞价资源。</p>
 
         <div class="card">
           <h3>cap 计算公式</h3>
@@ -141,14 +137,12 @@
             <tr><td><code>05</code></td><td>120</td><td>85</td><td>35</td><td><span class="pill ok">充足</span></td></tr>
             <tr><td><code>21</code></td><td>120</td><td>112</td><td>8</td><td><span class="pill warn">紧张</span></td></tr>
           </table>
-          <div class="note">cap 不足本次入库量时，评分引擎不将其列入候选或标注溢出（防 cap 失准）。增量维护异常须告警。</div>
         </div>
       </div>
 
       <!-- 7.3 评分因子权重 -->
       <div id="c3" class="hidden">
         <div class="sec-head"><h2>③ 评分因子权重</h2><span class="sec-tag">6 因子 · 权重滑块</span></div>
-        <p class="sec-sub">6 因子决定"在可行巷道集内放哪条巷道好"。权重在此处可调，修改在<strong>下次评分生效</strong>，规则可配不写死。示例值待现场确认。</p>
 
         <div class="card">
           <h3>6 因子权重（合计 100%）</h3>
@@ -165,7 +159,10 @@
               <button class="btn">保存并生效</button>
             </div>
           </div>
-          <div class="note">权重调优建议为 P2 路线图（规则统计+反事实模拟，LLM 生成建议，人采纳才生效，参数变更有风险）。当前首期由现场拍板配置。</div>
+          <div style="margin-top:12px;border-top:1px dashed var(--line);padding-top:12px;">
+            <button class="btn ghost" id="weightTuneBtn">🤖 AI 权重建议（影子模式 · 仅供参考）</button>
+            <div id="weightAiResult" style="margin-top:10px;"></div>
+          </div>
         </div>
 
         <div class="card">
@@ -185,7 +182,6 @@
       <!-- 7.4 近站台预留比例 -->
       <div id="c4" class="hidden">
         <div class="sec-head"><h2>④ 近站台预留比例</h2><span class="sec-tag">F3 批量分配子能力</span></div>
-        <p class="sec-sub">为 A 类爆款在近站台巷道预留稀缺黄金库容；非 A 类不得占用预留带；超时未用自动释放，避免空置。对应 PRD 13.1 决策 + 03 §3.3。</p>
 
         <div class="card">
           <h3>预留参数</h3>
@@ -226,14 +222,12 @@
             <code>cap_usable = max(cap_total − cap_reserved, 0)</code>（非 A 类可用；B/C 类受物理总格 60% 上限）<br>
             A 类可用 <code>cap_total</code>（含预留带）；超时（如 18:00）未用完自动释放给 B/C 类。
           </div>
-          <div class="note">算例：同一批货，爆款在近站台占比从逐单模式的 0% 提升到批量分配的 67%。预留比例默认 40%（基于物理总格数的<b>固定预留带</b>，已定；配置页可调）。</div>
         </div>
       </div>
 
       <!-- 7.5 对话指令词配置 -->
       <div id="c5" class="hidden">
         <div class="sec-head"><h2>⑤ 对话指令词配置</h2><span class="sec-tag">对话式操作台 · 指令→功能映射</span></div>
-        <p class="sec-sub">维护对话式操作台的"话术 → 功能"映射（L0 快捷指令 + L2 常用复杂问句模板）。新增话术由管理员配置，无需改代码。读操作直出卡片，写操作强制确认卡。</p>
 
         <div class="card">
           <h3>指令词映射表</h3>
@@ -258,16 +252,14 @@
             <tr><td>L0 按钮入口</td><td>快捷指令按钮 + 表单（data-goto 直达作业页）</td><td>否（首期必做）</td></tr>
             <tr><td>L2 外部 LLM 问句</td><td>调用外部 LLM 做意图分类与分析建议（按 12.5 脱敏）</td><td>是·外部（可选增强）</td></tr>
           </table>
-          <div class="note">术语统一：对话台仅 <b>L0 / L2</b> 两层；本文出现的 <b>L1</b> 一律指人工确认层（决策权在人，P0-F5），非意图分层；原"规则/模板匹配层"与"L3 自主规划 Agent"命名已废除。三类作业走 L0 按钮直达；KPI 指标查询由看板直呈并可下钻（不设固定语句模板，避免重复维护）；需要 LLM 分析的复杂问句走 L2 外部 LLM（统一外部调用，不考虑本地部署）。写操作一律确认卡→人工确认→调用对应作业页流程，对话台不产生第二套逻辑。</div>
         </div>
 
         <div class="card">
           <h3>冷路径 AI 辅助开关（09 原则④ · 一键关闭）</h3>
           <div class="cf-toggle">
-            <div class="cf-switch" id="aiSwitch"></div>
-            <span>冷路径 AI 辅助（L2 外部 LLM）当前：<b style="color:var(--green)">开启</b> · 关闭后对话台仅保留 L0 结构化入口</span>
+            <div class="cf-switch" id="aiSwitch" data-toggle="ai"></div>
+            <span>冷路径 AI 辅助（L2 外部 LLM）当前：<b id="aiSwitchState" style="color:var(--muted)">关闭</b> · 仅管理员可切换 · 关闭后对话台仅保留 L0 结构化入口</span>
           </div>
-          <div class="note">关闭后对话台不调用外部 LLM，仅保留 L0 按钮直达作业页 + KPI 看板直呈。核心链路（入库/出库/移库）不受影响，仍由规则引擎驱动。</div>
         </div>
       </div>
     </div>
@@ -278,5 +270,53 @@
 
 <a href="chat.html" class="dock" title="对话式操作台常驻浮窗">💬</a>
 <script src="assets/app.js"></script>
+<script>
+(function () {
+  if (!window.api || !window.renderDualProduct || !window.aiBody) return;
+
+  // ③ 权重影子建议卡（spec「p7 权重影子建议卡」）：影子模式不生效；采纳经二次确认。
+  const btn = document.getElementById('weightTuneBtn');
+  const out = document.getElementById('weightAiResult');
+  if (!btn || !out) return;
+  btn.addEventListener('click', async () => {
+    out.innerHTML = '<div class="state loading"><span class="spin"></span>权重建议分析中…</div>';
+    try {
+      const resp = await window.api('/llm/weight/tune', { method: 'POST', body: window.aiBody({}) });
+      renderWeight(out, resp);
+    } catch (e) {
+      out.innerHTML = '<div class="state error">' + window.escapeHtml((e.body && e.body.message) || e.message) + '</div>';
+    }
+  });
+
+  function renderWeight(out, resp) {
+    // 样本不足：只展示统计摘要，不渲染 AI 叙事、不显示采纳按钮（spec「样本不足」）。
+    if (resp.degraded_reason === 'insufficient_samples') {
+      const m = (resp.rule && resp.rule.metrics) || {};
+      out.innerHTML = '<div class="ai-card degraded"><div class="rh">AI 权重建议（样本不足）</div>'
+        + '<div class="rb">历史批次样本 ' + (m.sample_size != null ? m.sample_size : '—')
+        + ' / 需 ≥ ' + (m.required_sample_size != null ? m.required_sample_size : 50)
+        + '，暂不产出建议（不显示采纳）。</div></div>';
+      return;
+    }
+    // 正常：rule 数值 + ai 琥珀叙事同屏；影子模式不生效，采纳走二次确认。
+    window.renderDualProduct(out, resp);
+    const sid = resp.rule && resp.rule.suggestion_id;
+    if (sid) {
+      const bar = document.createElement('div');
+      bar.className = 'batchfoot';
+      bar.style.marginTop = '10px';
+      bar.innerHTML = '<span class="pill warn">影子模式 · 未生效</span>'
+        + '<button class="btn warn" id="weightAdoptBtn">采纳（二次确认）</button>';
+      out.appendChild(bar);
+      bar.querySelector('#weightAdoptBtn').addEventListener('click', () => {
+        if (!window.confirm('确认采纳该权重建议？采纳后写入 WeightConfig 并保留历史版本。')) return;
+        window.api('/llm/weight/apply', { method: 'POST', body: window.aiBody({ suggestion_id: sid }) })
+          .then(r => { out.innerHTML = '<div class="state success">已采纳 · 版本 ' + r.version_no + '</div>'; })
+          .catch(e => { out.innerHTML = '<div class="state error">' + window.escapeHtml((e.body && e.body.message) || e.message) + '</div>'; });
+      });
+    }
+  }
+})();
+</script>
 </body>
 </html>

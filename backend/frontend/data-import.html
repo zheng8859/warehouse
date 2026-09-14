@@ -34,12 +34,10 @@
 
   <main>
     <div class="sec-head"><h2>② 数据导入页</h2><span class="sec-tag">仓管员 / 管理员</span></div>
-    <p class="sec-sub">文件级数据衔接入口（见 16 号）。三类上传位：PO / DO / 库存快照（成品清单 ABC 为脚本通道，不在此页）。数据时点必填（默认当天），导入即基准。</p>
 
     <div class="op-banner">
       <span class="tag">作业</span>
       <b>三类文件上传 + 数据时点标注（必填，默认当天） + 导入后校验；导入即基准</b>
-      <div class="sub">PO → 入库队列 · DO → 出库任务 · INV → cap 基线</div>
     </div>
 
     <div class="card">
@@ -59,19 +57,16 @@
           <div class="ic">PO</div>
           <div class="nm">生产订单</div>
           <input type="file" data-file-type="PO" accept=".xlsx,.csv">
-          <div class="st">→ 入库作业待推荐队列</div>
         </div>
         <div class="uz" data-slot="DO">
           <div class="ic">DO</div>
           <div class="nm">交货单</div>
           <input type="file" data-file-type="DO" accept=".xlsx,.csv">
-          <div class="st">→ 出库作业拣配任务</div>
         </div>
         <div class="uz" data-slot="INV">
           <div class="ic">INV</div>
           <div class="nm">库存快照</div>
           <input type="file" data-file-type="INV" accept=".xlsx,.csv">
-          <div class="st">→ 建立 cap 基线（P0-F9）</div>
         </div>
       </div>
       <div style="margin-top:13px;display:flex;gap:10px;">
@@ -88,7 +83,6 @@
           <tr><th>文件</th><th>解析条数</th><th>字段命中</th><th>口径异常</th><th>状态</th></tr>
         </table>
       </div>
-      <div class="note">校验失败须阻断导入并提示，不得带病入库。成功后：PO → 入库队列 / DO → 出库任务 / INV → cap 基线。</div>
     </div>
 
     <div class="foot">② 数据导入页 · 按 21/22/24 号文档生成</div>
@@ -118,7 +112,6 @@
       files[ft] = { filename: f.name, content_base64: await readFileAsBase64(f) };
       const card = inp.closest('.uz');
       card.classList.add('ok');
-      card.querySelector('.st').textContent = '已选 ' + f.name + ' ✓';
     });
   });
 
