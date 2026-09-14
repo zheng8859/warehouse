@@ -14,7 +14,7 @@
 
 - [x] 2.1 `llm/redact.py` 正向白名单脱敏管线：出境 JSON 仅含料号/品名/批号/巷道/库位/数量/板数/聚合指标/6 因子分值/cap 格数；禁出 `order_no` + 操作员姓名 + 操作员备注。验证：出境 payload 组装器单测逐字段断言（安全隔离基线维度）。
 - [x] 2.2 `llm/client.py` provider 抽象（`llm_provider` 空 = 不调用）+ 超时（`llm_request_timeout_s=2.0`）+ mock 客户端。验证：mock 客户端单测 + 超时→`llm_timeout` 降级单测。
-- [ ] 2.3 `llm/quota.py` 成本护栏三门槛（token/并发/月预算）+ 同步记账（更新 `AiCostQuota`）+ 入口熔断（`budget_exhausted`）。验证：注入小预算触发熔断、并发计数、同步记账单测。
+- [x] 2.3 `llm/quota.py` 成本护栏三门槛（token/并发/月预算）+ 同步记账（更新 `AiCostQuota`）+ 入口熔断（`budget_exhausted`）。验证：注入小预算触发熔断、并发计数、同步记账单测。
 - [ ] 2.4 网关编排 `llm/capabilities.py`：统一链路「规则算 → 脱敏 → 护栏 → 调用 → 记账 → 双产物响应」。验证：集成单测——`provider_unconfigured` / `budget_exhausted` / `llm_timeout` / `llm_unavailable` 四种降级路径均 200 + 规则卡片。
 
 ## 3. 四类能力（规则侧 + LLM 侧）
