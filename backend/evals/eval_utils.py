@@ -17,7 +17,7 @@
 """
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 

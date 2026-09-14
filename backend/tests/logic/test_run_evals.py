@@ -127,12 +127,12 @@ def test_degradation_within_3pct_records(monkeypatch: pytest.MonkeyPatch, tmp_pa
 
 
 def test_p0_guard_failure_blocks_immediately(monkeypatch: pytest.MonkeyPatch) -> None:
-    """P0 护栏（出域=0 golden_022）失败 → 立即阻断，退出码 2，不靠百分比稀释。"""
+    """P0 护栏（决策可追溯 golden_044）失败 → 立即阻断，退出码 2，不靠百分比稀释。"""
 
     def fake(paths, *, marker=None, keyword=None):
         if keyword:  # P0 那一次调用（-k 选 golden）
             return FakeProc(
-                "FAILED evals/l2_integration/test_l2_permission.py::test_golden_022_x - AssertionError\n"
+                "FAILED evals/l2_integration/test_l2_instruction_reliability.py::test_golden_044_x - AssertionError\n"
                 "2 passed, 1 failed in 0.1s",
                 returncode=1,
             )
@@ -140,8 +140,8 @@ def test_p0_guard_failure_blocks_immediately(monkeypatch: pytest.MonkeyPatch) ->
 
     monkeypatch.setattr(re, "_run_pytest", fake)
     report = re._evaluate(_args(tier="l2"))
-    assert report["p0"]["出域"] is False
-    assert report["p0"]["决策可追溯"] is False  # 同一条 golden_022 也守可追溯
+    assert report["p0"]["决策可追溯"] is False
+    assert report["p0"]["出域"] is True  # golden_022 未被命中
     assert report["p0"]["台账完整性"] is True
     assert report["exit_code"] == re.EXIT_P0
 
@@ -180,3 +180,18 @@ def test_save_baseline_backfills_and_refuses_downgrade(tmp_path, capsys: pytest.
     d2 = json.loads(b.read_text(encoding="utf-8"))
     assert d2["tiers"]["l1"]["pass_rate"] == 1.0
     assert "拒绝基线下调" in capsys.readouterr().err
+
+
+def test_save_baseline_with_dimension_is_skipped(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`--save-baseline` 与 `--dimension` 互斥：跳过回填，不把维度名写进 tiers 键。"""
+    b = tmp_path / "b.json"
+    b.write_text(json.dumps({"tiers": {"l1": {"pass_rate": 1.0}}}), encoding="utf-8")
+
+    monkeypatch.setattr(re, "_run_pytest", lambda *a, **k: FakeProc("1 passed in 0.1s"))
+    re.main(["--tier", "all", "--dimension", "指令可靠性", "--save-baseline", "--compare", str(b)])
+
+    d = json.loads(b.read_text(encoding="utf-8"))
+    assert "指令可靠性" not in d["tiers"]
+    assert "互斥" in capsys.readouterr().err

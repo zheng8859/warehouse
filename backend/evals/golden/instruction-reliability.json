@@ -8,7 +8,7 @@
     "expected": "前端弹二次确认卡，未确认不执行",
     "assertion": "exact",
     "tolerance": {},
-    "tags": ["confirm", "write-intent"],
+    "tags": ["confirm", "write-intent", "regression-baseline"],
     "source": "13号 操作确认；决策权在人"
   },
   {

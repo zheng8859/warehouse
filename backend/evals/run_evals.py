@@ -69,7 +69,7 @@ DIMENSIONS: dict[str, tuple[str, ...]] = {
     "数据接入质量": ("l2_integration/test_l2_import.py",),
     "错误恢复降级": ("l1_unit/test_l1_unit_cap.py", "l1_unit/test_l1_unit_degrade.py"),
     "分配合规": ("l1_unit/test_l1_unit_cap.py", "l1_unit/test_l1_unit_degrade.py", "l2_integration/test_l2_job.py"),
-    "指令可靠性": ("l2_integration/test_l2_job.py", "l2_integration/test_l2_permission.py"),
+    "指令可靠性": ("l2_integration/test_l2_instruction_reliability.py",),
     "集中度趋势": ("l3_quality/test_l3_concentration.py",),
     "移库有效性": ("l3_quality/test_l3_relocate.py",),
     "性能基线": ("l3_quality/test_l3_perf.py",),
@@ -80,7 +80,7 @@ DIMENSIONS: dict[str, tuple[str, ...]] = {
 #: 键为护栏名，值为对应 golden 场景 id（测试函数名含 `golden_NNN`，用 `-k` 选中）。
 P0_GUARDS: dict[str, tuple[str, ...]] = {
     "台账完整性": ("golden_010", "golden_011"),
-    "决策可追溯": ("golden_022",),
+    "决策可追溯": ("golden_044",),
     "出域": ("golden_022",),
 }
 
@@ -385,10 +385,20 @@ def main(argv: list[str] | None = None) -> int:
     report = _evaluate(args)
 
     if args.save_baseline:
-        tier_rates = {t: report["tiers"][t]["pass_rate"] for t in report["tiers"]}
-        baseline_path = args.compare if args.compare else BASELINE_DEFAULT
-        _save_baseline(baseline_path, tier_rates)
-        print(f"基线已回填：{Path(baseline_path)}", file=sys.stderr)
+        if args.dimension:
+            print(
+                "  --save-baseline 与 --dimension 互斥：定向维度测不出整层通过率，跳过回填。",
+                file=sys.stderr,
+            )
+        else:
+            tier_rates = {
+                t: report["tiers"][t]["pass_rate"]
+                for t in ("l1", "l2", "l3")
+                if t in report["tiers"]
+            }
+            baseline_path = args.compare if args.compare else BASELINE_DEFAULT
+            _save_baseline(baseline_path, tier_rates)
+            print(f"基线已回填：{Path(baseline_path)}", file=sys.stderr)
 
     if args.json:
         print(json.dumps(report, ensure_ascii=False, indent=2))

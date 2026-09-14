@@ -59,5 +59,5 @@
 
 ## 9. 基线建立与全量验证
 
-- [x] 9.1 `run_evals --tier all --run-slow --save-baseline` 建基线，确认 L1≥95% / L2≥90% / L3 达验收口径、6 个回归样本（`golden_001`/`022`/`033`/`040`/`045`/`050`）全过、`baseline.json` 回填；验证：命令退出 0 且报告显示达标
+- [x] 9.1 `run_evals --tier all --run-slow --save-baseline` 建基线，确认 L1≥95% / L2≥90% / L3 达验收口径、6 个回归样本（`golden_001`/`022`/`033`/`040`/`041`/`050`）全过、`baseline.json` 回填；验证：命令退出 0 且报告显示达标（30号 §五 的「golden_045=指令可靠」在 apply 时按 §1.3「编号无需强制对齐」重编号为 `golden_041`，指令可靠四场景占 `golden_041~044`）
 - [x] 9.2 全量 `pytest tests/` 零回归；验证：无失败（既有 1375 passed 不降）
