@@ -82,10 +82,25 @@ class ConfirmOutcome(BaseModel):
     error: str | None = None
 
 
+class BatchSummary(BaseModel):
+    """批量确认的部分成功聚合（`15-05` §5.2 的 `summary`）。
+
+    口径（design.md D1）：`success` = 写台账执行成功（`VERIFIED` / `VERIFY_FAILED`），
+    `failed` = 未执行（写台账失败回退 `PLANNED`，或源状态非 `PLANNED` 被拒）。不变量：
+    `success + failed = total`，与 `results[]` 逐单一致。
+    """
+
+    total: int
+    success: int
+    failed: int
+
+
 class BatchConfirmResponse(BaseModel):
-    """`POST /api/job/batch/confirm` 的响应体。`results` 沿请求序返回。"""
+    """`POST /api/job/batch/confirm` 的响应体。`results` 沿请求序返回，`summary` 为部分
+    成功聚合，与 `results` 逐单一致。"""
 
     results: list[ConfirmOutcome]
+    summary: BatchSummary
 
 
 class RejectRequest(BaseModel):
