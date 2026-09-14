@@ -206,11 +206,12 @@ WAL 下多读单写。应用**必须单进程运行**，**不得加 `--workers`*
 ```
 <type>(<scope>): <subject>
 type : feat / fix / test / refactor / docs / chore / perf
-scope: model / auth / engine / job / import / cap / eval / ui / env / golden-NNN
+scope: model / auth / engine / job / import / cap / eval / ui / env / ai / golden-NNN
 ```
 
 `env` 为 2026-09-11 新增，`00` §4.2 正本与 `check_commit_msg.py` 已同步。
 它专用于**环境搭建 / 脚手架**等非子系统改动（阶段一）；其余 scope 均对应一个子系统。
+`ai` 为 2026-09-14 新增，对应**冷路径 AI 辅助**子系统（`backend/app/llm/`，阶段五）。
 **scope 必填** —— 校验正则硬要求括号，`chore: xxx` 不通过。
 
 原子化 commit，**不攒批提交**。每完成一个模型/组件就提交。
