@@ -16,12 +16,12 @@
 
 ## 2. eval_utils 门面
 
-- [ ] 2.1 写 `evals/eval_utils.py` 5 纯函数（`weighted_concentration`/`cross_aisle`/`normalize_weights`/`select_degrade`/`assert_no_pii`），re-export 既有 `services/kpi.py`、`engine/degradation.py`、`engine/scoring.py`、`llm/redact.py` 口径；验证：单测断言门面输出与业务函数输出一致（同源不漂移）
+- [x] 2.1 写 `evals/eval_utils.py` 5 纯函数（`weighted_concentration`/`cross_aisle`/`normalize_weights`/`select_degrade`/`assert_no_pii`），re-export 既有 `services/kpi.py`、`engine/degradation.py`、`engine/scoring.py`、`llm/redact.py` 口径；验证：单测断言门面输出与业务函数输出一致（同源不漂移）
 
 ## 3. 测试框架基础
 
-- [ ] 3.1 `pyproject.toml` 新增 markers `l1`/`l2`/`l3`/`slow`；验证：`pytest --markers` 列出四者
-- [ ] 3.2 写 `evals/conftest.py`（DB 连接 in-memory、Golden JSON 加载、API client、4 角色认证 token）；验证：一条冒烟测试取到 `client` 与 4 角色 token
+- [x] 3.1 `pyproject.toml` 新增 markers `l1`/`l2`/`l3`/`slow`；验证：`pytest --markers` 列出四者
+- [x] 3.2 写 `evals/conftest.py`（DB 连接 in-memory、Golden JSON 加载、API client、4 角色认证 token）；验证：一条冒烟测试取到 `client` 与 4 角色 token
 
 ## 4. L1 单元层（24 道，纯函数，≥95%）
 
