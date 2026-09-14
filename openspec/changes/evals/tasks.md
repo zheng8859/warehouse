@@ -25,10 +25,10 @@
 
 ## 4. L1 单元层（24 道，纯函数，≥95%）
 
-- [ ] 4.1 写 `evals/l1_unit/test_l1_unit_scoring.py`（6 因子评分 6 道，`golden_001`/`golden_006`，确定性 100%：同输入两次输出一致）；验证：`run_evals --tier l1 --dimension 评分正确性` 通过
-- [ ] 4.2 写 `evals/l1_unit/test_l1_unit_cap.py`（cap 竞价/预留扣减 5 道，含 `golden_033` 超总格回滚 100% 触发）；验证：`golden_033` 断言回滚
-- [ ] 4.3 写 `evals/l1_unit/test_l1_unit_degrade.py`（降级链 5 道，含 `golden_035` cap 不足逐级降级、`golden_040` A 类降级告警 + 理由可见）；验证：`golden_040` 必含告警与 `degrade_reason`
-- [ ] 4.4 写 `evals/l1_unit/test_l1_unit_distance_fifo.py`（巷道距离/FIFO 4 道）+ `test_l1_unit_weights.py`（权重归一化 4 道，权重=0 时贡献=0）；验证：L1 全层通过率 ≥95%
+- [x] 4.1 写 `evals/l1_unit/test_l1_unit_scoring.py`（6 因子评分 6 道，`golden_001`/`golden_006`，确定性 100%：同输入两次输出一致）；验证：`run_evals --tier l1 --dimension 评分正确性` 通过
+- [x] 4.2 写 `evals/l1_unit/test_l1_unit_cap.py`（cap 竞价/预留扣减 5 道，含 `golden_033` 超总格回滚 100% 触发）；验证：`golden_033` 断言回滚
+- [x] 4.3 写 `evals/l1_unit/test_l1_unit_degrade.py`（降级链 5 道，含 `golden_035` cap 不足逐级降级、`golden_040` A 类降级告警 + 理由可见）；验证：`golden_040` 必含告警与 `degrade_reason`
+- [x] 4.4 写 `evals/l1_unit/test_l1_unit_distance_fifo.py`（巷道距离/FIFO 4 道）+ `test_l1_unit_weights.py`（权重归一化 4 道，权重=0 时贡献=0）；验证：L1 全层通过率 ≥95%
 
 ## 5. L2 集成层（24 道，API 行为，≥90%）
 
