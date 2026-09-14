@@ -1,0 +1,38 @@
+[
+  {
+    "id": "golden_019",
+    "layer": "baseline",
+    "dimension": "配置合规与权限",
+    "eval_type": "l2",
+    "input": "无凭据访问受保护端点",
+    "expected": "返回 401",
+    "assertion": "exact",
+    "tolerance": {},
+    "tags": ["auth", "401"],
+    "source": "13号 §6.1 白名单与认证"
+  },
+  {
+    "id": "golden_020",
+    "layer": "baseline",
+    "dimension": "配置合规与权限",
+    "eval_type": "l2",
+    "input": "无权限角色访问 /api/allocate/batch",
+    "expected": "返回 403",
+    "assertion": "exact",
+    "tolerance": {},
+    "tags": ["rbac", "403"],
+    "source": "13号 §2.2 权限矩阵"
+  },
+  {
+    "id": "golden_021",
+    "layer": "baseline",
+    "dimension": "配置合规与权限",
+    "eval_type": "l2",
+    "input": "非法请求体",
+    "expected": "返回 422",
+    "assertion": "exact",
+    "tolerance": {},
+    "tags": ["validation", "422"],
+    "source": "19号 异常映射"
+  }
+]

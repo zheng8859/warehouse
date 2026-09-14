@@ -1,0 +1,62 @@
+[
+  {
+    "id": "golden_036",
+    "layer": "boundary",
+    "dimension": "分配合规",
+    "eval_type": "l2",
+    "input": "货未入库时顺路取",
+    "expected": "提示但不阻断",
+    "assertion": "exact",
+    "tolerance": {},
+    "tags": ["allocator", "hint"],
+    "source": "15号 三类作业"
+  },
+  {
+    "id": "golden_037",
+    "layer": "boundary",
+    "dimension": "分配合规",
+    "eval_type": "l1",
+    "input": "非 A 类物料分配",
+    "expected": "不占用近站台预留池",
+    "assertion": "exact",
+    "tolerance": {},
+    "tags": ["reserved", "abc"],
+    "source": "14号 预留池；红线"
+  },
+  {
+    "id": "golden_038",
+    "layer": "boundary",
+    "dimension": "分配合规",
+    "eval_type": "l1",
+    "input": "评分后选最佳",
+    "expected": "分配结果巷道号 ∈ 候选集",
+    "assertion": "exact",
+    "tolerance": {},
+    "tags": ["allocator", "candidate"],
+    "source": "14号 候选集与综合评分"
+  },
+  {
+    "id": "golden_039",
+    "layer": "boundary",
+    "dimension": "分配合规",
+    "eval_type": "l1",
+    "input": "分配完成后",
+    "expected": "cap 扣减 = 台账增量来源，同事务",
+    "assertion": "exact",
+    "tolerance": {},
+    "tags": ["cap", "ledger"],
+    "source": "16号 cap 自维护；15号 台账"
+  },
+  {
+    "id": "golden_040",
+    "layer": "boundary",
+    "dimension": "分配合规",
+    "eval_type": "l1",
+    "input": "A 类物料触发降级",
+    "expected": "告警 + 理由含 degrade_reason",
+    "assertion": "exact",
+    "tolerance": {},
+    "tags": ["alarming", "degrade", "regression-baseline"],
+    "source": "20号 AC；14号 降级告警"
+  }
+]

@@ -1,0 +1,74 @@
+[
+  {
+    "id": "golden_001",
+    "layer": "baseline",
+    "dimension": "评分正确性",
+    "eval_type": "l1",
+    "input": "A类物料，近站台巷道有空容，其余巷道也有空容",
+    "expected": "近站台巷道得分最高并进入候选集；同输入两次运行输出完全一致",
+    "assertion": "exact",
+    "tolerance": {"determinism": 1.0},
+    "tags": ["scoring", "determinism", "regression-baseline"],
+    "source": "20号 SC-006；14号 §3.2"
+  },
+  {
+    "id": "golden_002",
+    "layer": "baseline",
+    "dimension": "评分正确性",
+    "eval_type": "l1",
+    "input": "B类物料，两条巷道容量相同",
+    "expected": "现有库存因子（FIFO 越先入得分越高）参与区分，非平局随机",
+    "assertion": "exact",
+    "tolerance": {},
+    "tags": ["scoring", "fifo"],
+    "source": "20号 SC-002；14号 现有库存因子"
+  },
+  {
+    "id": "golden_003",
+    "layer": "baseline",
+    "dimension": "评分正确性",
+    "eval_type": "l1",
+    "input": "某巷道已存同物料库存",
+    "expected": "连续性因子加分，优先推荐同巷，减少跨巷",
+    "assertion": "exact",
+    "tolerance": {},
+    "tags": ["scoring", "continuity"],
+    "source": "14号 连续性因子"
+  },
+  {
+    "id": "golden_004",
+    "layer": "baseline",
+    "dimension": "评分正确性",
+    "eval_type": "l1",
+    "input": "近站台与远巷道距离权重存在差异",
+    "expected": "距离因子得分：近站台 > 远巷道",
+    "assertion": "exact",
+    "tolerance": {},
+    "tags": ["scoring", "distance"],
+    "source": "14号 距离因子"
+  },
+  {
+    "id": "golden_005",
+    "layer": "baseline",
+    "dimension": "评分正确性",
+    "eval_type": "l1",
+    "input": "同批大量与零星批次对比",
+    "expected": "批量因子使大批量得分权重更高",
+    "assertion": "exact",
+    "tolerance": {},
+    "tags": ["scoring", "batch"],
+    "source": "14号 批量因子"
+  },
+  {
+    "id": "golden_006",
+    "layer": "baseline",
+    "dimension": "评分正确性",
+    "eval_type": "l1",
+    "input": "六因子全默认权重",
+    "expected": "综合得分=Σ(权重×归一化因子)，权重和=1，结果确定",
+    "assertion": "exact",
+    "tolerance": {"determinism": 1.0},
+    "tags": ["scoring", "weights"],
+    "source": "14号 §3.2 权重与综合评分"
+  }
+]

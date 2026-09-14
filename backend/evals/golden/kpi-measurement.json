@@ -1,0 +1,74 @@
+[
+  {
+    "id": "golden_013",
+    "layer": "baseline",
+    "dimension": "KPI计量正确性",
+    "eval_type": "l2",
+    "input": "某物料分布在多条巷道",
+    "expected": "同物料跨巷道计数 = 实际占用巷道数",
+    "assertion": "exact",
+    "tolerance": {},
+    "tags": ["kpi", "cross-aisle"],
+    "source": "18号 §1.3 同物料跨巷道"
+  },
+  {
+    "id": "golden_014",
+    "layer": "baseline",
+    "dimension": "KPI计量正确性",
+    "eval_type": "l2",
+    "input": "某批次分布在多条巷道",
+    "expected": "同批跨巷道计数正确",
+    "assertion": "exact",
+    "tolerance": {},
+    "tags": ["kpi", "cross-aisle"],
+    "source": "18号 §1.3 同批跨巷道"
+  },
+  {
+    "id": "golden_015",
+    "layer": "baseline",
+    "dimension": "KPI计量正确性",
+    "eval_type": "l2",
+    "input": "各巷道拣货量已知",
+    "expected": "拣货量加权集中度 80% 落 ≤N（N=5）巷道数计算正确",
+    "assertion": "exact",
+    "tolerance": {},
+    "tags": ["kpi", "concentration"],
+    "source": "18号 §1.3 L36 加权集中度"
+  },
+  {
+    "id": "golden_016",
+    "layer": "baseline",
+    "dimension": "KPI计量正确性",
+    "eval_type": "l2",
+    "input": "采纳数与总数已知",
+    "expected": "推荐采纳率 = adopted / total",
+    "assertion": "exact",
+    "tolerance": {},
+    "tags": ["kpi", "adoption"],
+    "source": "18号 推荐采纳率"
+  },
+  {
+    "id": "golden_017",
+    "layer": "baseline",
+    "dimension": "KPI计量正确性",
+    "eval_type": "l2",
+    "input": "给定快照与台账",
+    "expected": "KPI 快照聚合数量正确",
+    "assertion": "exact",
+    "tolerance": {},
+    "tags": ["kpi", "snapshot"],
+    "source": "18号 KPI 快照"
+  },
+  {
+    "id": "golden_018",
+    "layer": "baseline",
+    "dimension": "KPI计量正确性",
+    "eval_type": "l2",
+    "input": "同物料占用巷道数已知",
+    "expected": "同物料跨巷道 ≤5 达标判定正确",
+    "assertion": "threshold",
+    "tolerance": {"cross_aisle_max": 5},
+    "tags": ["kpi", "threshold", "regression-baseline"],
+    "source": "20号 §五；18号 同物料跨巷道 ≤5"
+  }
+]
