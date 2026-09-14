@@ -44,8 +44,8 @@ from __future__ import annotations
 
 import re
 from collections import Counter
-from collections.abc import Sequence
-from datetime import datetime
+from collections.abc import Iterable, Sequence
+from datetime import datetime, time
 
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Query
@@ -54,11 +54,15 @@ from sqlalchemy.orm import Session
 from app.api.deps import current_account, get_db, require_permission
 from app.api.permissions import Permission
 from app.core.concurrency import bump_lock_version
+from app.core.config import settings
+from app.core.config_version import pick_current_version
 from app.core.enums import AbcClass, JobStatus, JobType
 from app.core.errors import BlockedMissingPrerequisite, StateConflict, ValidationBlocked
 from app.core.state_machine import assert_transition
-from app.engine.factors import load_snapshot_index
+from app.engine.factors import aisle_of, load_snapshot_index
 from app.engine.reasons import load_bulk_batch_nos, next_bulk_batch_no
+from app.engine.reserved import available_cap
+from app.models.configuration import CapacityConfig
 from app.models.identity import Account
 from app.models.job import (
     DeviationStatus,
@@ -68,7 +72,7 @@ from app.models.job import (
     RecommendationPlan,
     Verification,
 )
-from app.models.linkage import Snapshot
+from app.models.linkage import AisleCap, InventoryItem, Snapshot
 from app.schemas.job import (
     BatchConfirmRequest,
     BatchConfirmResponse,
@@ -87,12 +91,16 @@ from app.schemas.reason import (
     MAX_JOB_ORDERS_PER_BATCH,
     BatchPickSequenceRequest,
     BatchPickSequenceResponse,
+    BatchRelocatePlanRequest,
+    BatchRelocatePlanResponse,
     PickPlanItem,
+    RelocateMovedOutItem,
+    RelocatePlanItem,
 )
 from app.services import kpi
 from app.services.inbound import confirm_inbound
 from app.services.outbound import confirm_outbound, derive_pick_sequence
-from app.services.relocate import confirm_relocate
+from app.services.relocate import confirm_relocate, derive_consolidation_plan
 from app.services.verify import run_verification
 from app.services.void import void_job
 
@@ -229,6 +237,23 @@ def _require_outbound(orders: Sequence[JobOrder]) -> None:
         )
 
 
+def _require_relocate(orders: Sequence[JobOrder]) -> None:
+    """本批必须**全是移库单**，否则整批 422（design.md D3 第 1 条）。
+
+    批量收拢方案只对 `RELOCATE` 有意义；混进一张入库/出库单说明调用方把队列选错了，
+    整批拒绝而不是逐单跳过 —— 与 `_require_outbound` 同一理由（跳过会把「选错类型」
+    记成一次「部分单出了收拢方案」的正常结果）。
+    """
+    offenders = sorted(
+        str(order.id) for order in orders if order.job_type is not JobType.RELOCATE
+    )
+    if offenders:
+        raise ValidationBlocked(
+            f"本批有 {len(offenders)} 张单不是移库单：{offenders} —— 批量收拢方案只处理 RELOCATE",
+            detail={"not_relocate": offenders, "expected": JobType.RELOCATE.value},
+        )
+
+
 def _require_derivable(orders: Sequence[JobOrder]) -> None:
     """本批必须整批处于 `PENDING` 或 `PLANNED`，否则整体拒绝（design.md D3）。
 
@@ -273,6 +298,107 @@ def _current_pick_plan(session: Session, *, order: JobOrder) -> RecommendationPl
         .order_by(RecommendationPlan.id.desc())
         .limit(1)
     ).first()
+
+
+def _current_consolidation_plan(
+    session: Session, *, order: JobOrder
+) -> RecommendationPlan | None:
+    """该单「当前方案」= `plan_kind=CONSOLIDATE` 且 `id` 最大的一行（design.md D4；无则 `None`）。
+
+    与 `_current_pick_plan` 同一手法：`RecommendationPlan.job_order_id` 不唯一（视图推进
+    追加行），当前方案取 `id` 最大者。
+    """
+    return session.scalars(
+        sa.select(RecommendationPlan)
+        .where(
+            RecommendationPlan.job_order_id == order.id,
+            RecommendationPlan.plan_kind == PlanKind.CONSOLIDATE,
+        )
+        .order_by(RecommendationPlan.id.desc())
+        .limit(1)
+    ).first()
+
+
+def _batch_plates_by_aisle(
+    session: Session,
+    *,
+    snapshot_id: int,
+    warehouse_id: str,
+    material_code: str,
+    batch_no: str | None,
+) -> dict[str, int]:
+    """该单 `(material_code, batch_no)` 的库存行按巷道聚合板数（design.md D5）。
+
+    `profile` 只到物料级，而 `from_aisles` / `plates` / `.after` 要**批号级**板数 ——
+    故直接读该快照的 `InventoryItem`（不扩 `SnapshotIndex`，批号级只在出方案的这一刻
+    需要，不是评分热路径）。板数 = `qty` 之和（v1 板 = 格，与 `to_occupied_cells` 同口径）。
+    """
+    by_aisle: dict[str, int] = {}
+    for location_code, qty in session.execute(
+        sa.select(InventoryItem.location_code, InventoryItem.qty).where(
+            InventoryItem.warehouse_id == warehouse_id,
+            InventoryItem.snapshot_id == snapshot_id,
+            InventoryItem.material_code == material_code,
+            InventoryItem.batch_no == batch_no,
+        )
+    ):
+        aisle = aisle_of(location_code)
+        by_aisle[aisle] = by_aisle.get(aisle, 0) + qty
+    return by_aisle
+
+
+def _load_release_at(session: Session, *, warehouse_id: str, now: datetime) -> time:
+    """预留池释放钟点；无生效配置行退回引导值（与 `allocate._load_capacity_settings` 同口径）。"""
+    row = pick_current_version(
+        session.scalars(
+            sa.select(CapacityConfig).where(CapacityConfig.warehouse_id == warehouse_id)
+        ),
+        now=now,
+    )
+    if row is None:
+        return time.fromisoformat(settings.reserve_release_at)
+    return row.reserved_release_at
+
+
+def _load_aisle_caps(
+    session: Session, *, warehouse_id: str, snapshot_id: int
+) -> dict[str, AisleCap]:
+    """本快照全部巷道的 cap 行：`{aisle_no: AisleCap}`（整批读一次，D4「整批取数一次」）。"""
+    return {
+        cap.aisle_no: cap
+        for cap in session.scalars(
+            sa.select(AisleCap).where(
+                AisleCap.warehouse_id == warehouse_id,
+                AisleCap.snapshot_id == snapshot_id,
+            )
+        )
+    }
+
+
+def _available_by_aisle(
+    cap_rows: dict[str, AisleCap],
+    *,
+    aisles: Iterable[str],
+    abc_class: AbcClass | None,
+    release_at: time,
+    now: datetime,
+) -> dict[str, int]:
+    """候选巷道的可用格数（design.md D3 第 4 步）。缺 cap 行的巷道记 0 —— 纯函数据
+    `available[target] < plates` 走降级，不会因缺行而崩。
+
+    口径随 `abc_class`：A 类总额、非 A 类 `cap_usable`（释放钟点后同享总额，`available_cap`）。
+    """
+    available: dict[str, int] = {}
+    for aisle in aisles:
+        cap = cap_rows.get(aisle)
+        available[aisle] = (
+            0
+            if cap is None
+            else available_cap(
+                cap=cap, abc_class=abc_class, release_at=release_at, now=now
+            )
+        )
+    return available
 
 
 def _require_locations(order: JobOrder, item: ConfirmItem) -> None:
@@ -532,6 +658,171 @@ def batch_pick_sequence(
         snapshot_version=snapshot_version,
         plans=plans,
         not_in_stock=not_in_stock,
+    )
+
+
+@router.post("/batch/relocate-plan", response_model=BatchRelocatePlanResponse)
+def batch_relocate_plan(
+    payload: BatchRelocatePlanRequest,
+    session: Session = Depends(get_db),
+    _authorized: None = Depends(require_permission(Permission.RELOCATE_OPERATE)),
+) -> BatchRelocatePlanResponse:
+    """批量收拢方案派生（design.md D2 / D3）：对一组 `RELOCATE` 单按批号聚合散落板、定主巷道，
+    经三重校验（cap 充足 / 批号不变 / 集中度下降）产出收拢方案，写 `RecommendationPlan`
+    （`plan_kind=CONSOLIDATE`）并迁 `PLANNED`；不可行的单移出批量（`moved_out[]`）。
+
+    **只读派生**：不调 `engine.invoke`、不写台账/库存（D2）。步骤与失败面：
+
+    1. **报文 → id**：上限 / 形状 / 重号 / 不存在 / 非移库单 ⇒ 整批 422，零写入。
+    2. **状态**：有单不在 `PENDING`/`PLANNED` ⇒ 整批 409（D4 只派生这两种源状态）。
+    3. **快照**：无快照 ⇒ 409（`BlockedMissingPrerequisite`，提示重新导入，不猜测）。
+    4. **取数**：`profile`（物料级）+ `batch_plates_by_aisle`（批号级）+ `available`
+       （候选巷道可用格数，随 `abc_class`）。
+    5. **逐单派生**（D4 幂等键 = `bulk_batch_no` × 库存视图版本）：
+       - `PENDING`：`derive_consolidation_plan` 有方案 → 写方案、迁 `PLANNED`、回写
+         `bulk_batch_no`；否则记 `moved_out[]`（含降级原因），停留 `PENDING`。
+       - `PLANNED`：读「当前方案」（`id` 最大的 `CONSOLIDATE` 行）—— 同版本返既有
+         （幂等命中，不重复写、不重迁）；异版本（或无方案）重新派生并**追加**一行新方案。
+    6. **整批一次提交**（与 `allocate` 同口径）：纯派生 + 写方案，无台账/库存写，不存在
+       「一半有方案一半没有」的中间态。
+    """
+    now = datetime.now()
+
+    # 1~3. 报文级校验 + 状态 + 快照，全是整批拒绝（见 docstring）。
+    _require_batch_size(payload.job_order_ids)
+    ids = _parse_ids(payload.job_order_ids)
+    orders_by_id = _load_orders(session, warehouse_id=payload.warehouse_id, ids=ids)
+    orders = [orders_by_id[value] for value in ids]
+    _require_relocate(orders)
+    _require_derivable(orders)
+
+    snapshot = _current_snapshot_or_none(session, warehouse_id=payload.warehouse_id)
+    if snapshot is None:
+        raise BlockedMissingPrerequisite(
+            f"仓库 {payload.warehouse_id} 没有任何快照基线 —— 阻断本次批量收拢方案派生，不产出方案："
+            "请先导入库存快照（收拢方案按库存视图聚合，无快照即无分布可读）"
+        )
+    snapshot_version = _render_snapshot_version(snapshot)
+    if payload.snapshot_version is not None and payload.snapshot_version != snapshot_version:
+        raise StateConflict(
+            f"声明的快照版本 {payload.snapshot_version} 不是本次实际使用的那一版"
+            f"（{snapshot_version}，快照 #{snapshot.id}）—— 请重新读取当前快照后再提交",
+            detail={"declared": payload.snapshot_version, "actual": snapshot_version},
+        )
+
+    index = load_snapshot_index(session, snapshot_id=snapshot.id)
+    release_at = _load_release_at(session, warehouse_id=payload.warehouse_id, now=now)
+    cap_rows = _load_aisle_caps(
+        session, warehouse_id=payload.warehouse_id, snapshot_id=snapshot.id
+    )
+    bulk_batch_no = next_bulk_batch_no(
+        load_bulk_batch_nos(session, warehouse_id=payload.warehouse_id, now=now), now=now
+    )
+
+    # 4~5. 逐单派生（请求序）。纯派生 + 写方案，`now` 取一次；`bulk_batch_no` 只回写
+    #      本批真正迁 `PLANNED` 的单。
+    plans: list[RelocatePlanItem] = []
+    moved_out: list[RelocateMovedOutItem] = []
+    for order in orders:
+        profile = index.profile(order.material_code)
+        batch_plates_by_aisle = _batch_plates_by_aisle(
+            session,
+            snapshot_id=snapshot.id,
+            warehouse_id=order.warehouse_id,
+            material_code=order.material_code,
+            batch_no=order.batch_no,
+        )
+        available = _available_by_aisle(
+            cap_rows,
+            aisles=profile.plates_by_aisle,
+            abc_class=order.abc_class,
+            release_at=release_at,
+            now=now,
+        )
+
+        if order.status is JobStatus.PLANNED:
+            current = _current_consolidation_plan(session, order=order)
+            if (
+                current is not None
+                and current.payload_json.get("snapshot_version") == snapshot_version
+            ):
+                # 幂等命中：同版本返既有方案，不重复写、不重迁状态（D4）。
+                plans.append(
+                    RelocatePlanItem(
+                        job_order_id=str(order.id),
+                        plan_id=current.id,
+                        **current.payload_json,
+                    )
+                )
+                continue
+            # 视图推进（或无方案）：追加一行新方案，不重迁状态（已 PLANNED）。
+            result = derive_consolidation_plan(
+                material_code=order.material_code,
+                batch_no=order.batch_no,
+                profile=profile,
+                batch_plates_by_aisle=batch_plates_by_aisle,
+                available=available,
+            )
+            if result.plan is None:
+                moved_out.append(
+                    RelocateMovedOutItem(
+                        job_order_id=str(order.id), reason=result.moved_out_reason
+                    )
+                )
+                continue
+            payload_json = {**result.plan, "snapshot_version": snapshot_version}
+            row = RecommendationPlan(
+                warehouse_id=order.warehouse_id,
+                job_order_id=order.id,
+                plan_kind=PlanKind.CONSOLIDATE,
+                payload_json=payload_json,
+            )
+            session.add(row)
+            session.flush()
+            plans.append(
+                RelocatePlanItem(job_order_id=str(order.id), plan_id=row.id, **payload_json)
+            )
+            continue
+
+        # PENDING：派生 → 有方案迁 PLANNED，移出批量记 moved_out[]（降级不静默）。
+        result = derive_consolidation_plan(
+            material_code=order.material_code,
+            batch_no=order.batch_no,
+            profile=profile,
+            batch_plates_by_aisle=batch_plates_by_aisle,
+            available=available,
+        )
+        if result.plan is None:
+            moved_out.append(
+                RelocateMovedOutItem(
+                    job_order_id=str(order.id), reason=result.moved_out_reason
+                )
+            )
+            continue
+        payload_json = {**result.plan, "snapshot_version": snapshot_version}
+        row = RecommendationPlan(
+            warehouse_id=order.warehouse_id,
+            job_order_id=order.id,
+            plan_kind=PlanKind.CONSOLIDATE,
+            payload_json=payload_json,
+        )
+        session.add(row)
+        session.flush()
+        order.bulk_batch_no = bulk_batch_no
+        order.status = assert_transition(order.status, JobStatus.PLANNED)
+        bump_lock_version(order, expected=order.lock_version)
+        plans.append(
+            RelocatePlanItem(job_order_id=str(order.id), plan_id=row.id, **payload_json)
+        )
+
+    # 6. 整批一次提交（与 allocate / pick-sequence 同口径）。
+    session.commit()
+
+    return BatchRelocatePlanResponse(
+        bulk_batch_no=bulk_batch_no,
+        snapshot_version=snapshot_version,
+        plans=plans,
+        moved_out=moved_out,
     )
 
 

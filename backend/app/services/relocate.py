@@ -1,22 +1,191 @@
 """移库管线（7 步）：KPI 识别偏离 → 筛选 → 勾选 → 批量生成收拢方案 → 逐单处置 → 批量确认执行 → 写移库台账 + 后验刷新。15 §2.3。目标巷道 = 主巷道；不改批号。
 
-本模块落「批量确认执行 → 写移库台账」这一段的确认编排（design.md D5）：
-`confirm_relocate` 把一张 `PLANNED` 的移库单经 `CONFIRMED` 迁到 `EXECUTED`，同事务写移库台账
-（源 + 目标都有）与 cap 增量（源 ↓、目标 ↑）。**移库不改批号**（CLAUDE.md §四）—— 台账只记
-源 / 目标库位，批号原样照抄。后验在 `verify.py`。
+本模块落两段：
+
+- **收拢方案只读派生**（design.md D2）：`derive_consolidation_plan` 是纯函数，按批号聚合
+  散落板、定主巷道（= 该物料库存最集中的巷道）+ 三重校验（cap 充足 / 批号不变 /
+  收拢后跨巷道数下降）+ 降级链（主巷道 → 次选 → 移出批量）。不触会话、不调
+  `engine.invoke`、不写 `InventoryItem`/`Ledger`。
+- **批量确认执行 → 写移库台账**（design.md D5）：`confirm_relocate` 把一张 `PLANNED` 的
+  移库单经 `CONFIRMED` 迁到 `EXECUTED`，同事务写移库台账（源 + 目标都有）与 cap 增量
+  （源 ↓、目标 ↑）。**移库不改批号**（CLAUDE.md §四）—— 台账只记源 / 目标库位，批号
+  原样照抄。后验在 `verify.py`。
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime
 
 from sqlalchemy.orm import Session
 
 from app.core.enums import JobStatus
-from app.engine.factors import load_snapshot_index
+from app.engine.factors import InventoryProfile, load_snapshot_index
 from app.models.job import JobOrder
 from app.models.linkage import Snapshot
 from app.services.confirm import _confirm_and_execute
 from app.services.verify import run_verification
+
+
+@dataclass(frozen=True)
+class ConsolidationPlanResult:
+    """收拢方案派生的结果：出方案（`plan`）或移出批量（`moved_out_reason`），**恰有其一**。
+
+    两个字段都判空（或都给）的结果没法被消费方解读：端点要按它决定「写 `RecommendationPlan`
+    并迁 `PLANNED`」还是「记入 `moved_out[]`」。故这条不自洽在**构造时**就拦掉（与
+    `FactorOutcome` 的 `__post_init__` 同一手法），而不是等调用方拿到一个 `plan=None` 的
+    方案或一个空 `moved_out_reason` 才炸。
+    """
+
+    plan: dict | None = None
+    moved_out_reason: str | None = None
+
+    def __post_init__(self) -> None:
+        if (self.plan is None) == (self.moved_out_reason is None):
+            raise ValueError(
+                "ConsolidationPlanResult 必须恰有其一：plan（收拢方案）或 "
+                "moved_out_reason（移出批量的降级原因）"
+            )
+        if self.moved_out_reason is not None and not self.moved_out_reason.strip():
+            raise ValueError("移出批量必须写明原因（降级不静默）")
+
+
+def _target_candidates(profile: InventoryProfile) -> list[str]:
+    """收拢目标候选：物料级板数降序、并列按巷道号升序，取前二（主巷道 + 次选）。
+
+    D1 的口径：主巷道 = `plates_by_aisle` 的 argmax，并列取巷道号文本升序最小；次选 =
+    板数第二多。降级链只有两档（主巷道 → 次选 → 移出批量，15-04 §4.3），故取 `[:2]`，
+    不给「再往下退一档」留余地 —— 那会把「收拢到第三集中的巷道」这种既非最优、又可能
+    违反集中度判据的落点放进方案。
+    """
+    ranked = sorted(
+        profile.plates_by_aisle.items(), key=lambda kv: (-kv[1], kv[0])
+    )
+    return [aisle for aisle, _ in ranked[:2]]
+
+
+def _consolidate_to(
+    *,
+    material_code: str,
+    batch_no: str,
+    profile: InventoryProfile,
+    batch_plates_by_aisle: Mapping[str, int],
+    available: Mapping[str, int],
+    target: str,
+) -> tuple[dict | None, tuple[str, str] | None]:
+    """对**一个**目标巷道试算收拢方案；返回 `(plan, failure)`，恰一非空。
+
+    `failure` = `(kind, message)`，`kind` ∈ {`"cap"`, `"concentration"`}。把成因分两档
+    而不是统一成一句文案，是因为主巷道的两种失败**去向不同**：`cap` 触发降级次选，
+    `concentration` 直接移出批量（降级目标巷道救不了「已集中于主巷道 / 散落板与其他
+    物料共占」—— 那两类都不是容量问题）。
+
+    - `from_aisles` = `batch_plates_by_aisle` 里**非目标**的巷道，按巷道号升序。
+    - `plates` = 散落板总数 = `from_aisles` 板数之和。
+    - `after` = `profile.cross_aisle_count` − 收拢后变空的 from_aisle 数；「变空」判据 =
+      `batch_plates_by_aisle[a] == profile.plates_by_aisle[a]`（该批号是该巷唯一物料板）。
+    - cap 充足 = `available[target] >= plates`（v1 板 = 格，与 `to_occupied_cells` 同口径）。
+    """
+    from_aisles = sorted(a for a in batch_plates_by_aisle if a != target)
+    plates = sum(batch_plates_by_aisle[a] for a in from_aisles)
+    before = profile.cross_aisle_count
+    emptied = sum(
+        1
+        for a in from_aisles
+        if batch_plates_by_aisle[a] == profile.plates_by_aisle.get(a, 0)
+    )
+    after = before - emptied
+
+    avail = available.get(target, 0)
+    if avail < plates:
+        return None, ("cap", f"巷道 {target} 容量不足（可用 {avail}，需 {plates} 板）")
+    if after >= before:
+        return None, (
+            "concentration",
+            f"收拢后同物料跨巷道数不低于收拢前（{after} ≥ {before}）——"
+            "该批号已集中于主巷道，或散落板与其他物料共占、移出后巷道不变空",
+        )
+    plan = {
+        "batch_no": batch_no,
+        "material_code": material_code,
+        "from_aisles": from_aisles,
+        "target_aisle": target,
+        "plates": plates,
+        "expected_cross_aisle": {"before": before, "after": after},
+        "batch_unchanged": True,
+    }
+    return plan, None
+
+
+def derive_consolidation_plan(
+    *,
+    material_code: str,
+    batch_no: str,
+    profile: InventoryProfile,
+    batch_plates_by_aisle: Mapping[str, int],
+    available: Mapping[str, int],
+) -> ConsolidationPlanResult:
+    """收拢方案**只读派生**（15-04 §4.2 / design.md D2）：主巷道 + 三重校验 + 降级链。
+
+    纯函数：不触会话、不调 `engine.invoke`、不写 `InventoryItem`/`Ledger`。输入 = 现状分布
+    （`SnapshotIndex.profile(material_code)` 的 `InventoryProfile`）+ 批号级取数
+    （`batch_plates_by_aisle`）+ 各候选巷道的可用格数（`available`），输出 `17` §10.3 形状
+    （或移出批量的降级原因）。
+
+    三重校验：① cap 充足 ② 批号不变（`batch_unchanged`，结构性恒真）③ 集中度改善
+    （`after < before`）。降级链：主巷道 cap 不足 → 次选（cap 充足且 `after < before`
+    仍成立，方案记 `degrade_reason`）→ 仍不可行 → `moved_out_reason`（降级不静默）。
+
+    确定性：同样输入必得同样输出（无随机、无大模型）。
+    """
+    candidates = _target_candidates(profile)
+    if not candidates:
+        return ConsolidationPlanResult(
+            moved_out_reason="该物料在快照中无库存分布，无候选主巷道可收拢"
+        )
+
+    main_aisle = candidates[0]
+    main_plan, main_fail = _consolidate_to(
+        material_code=material_code,
+        batch_no=batch_no,
+        profile=profile,
+        batch_plates_by_aisle=batch_plates_by_aisle,
+        available=available,
+        target=main_aisle,
+    )
+    if main_plan is not None:
+        return ConsolidationPlanResult(plan=main_plan)
+
+    kind, message = main_fail  # type: ignore[misc]  # main_fail 非空（plan 为 None）
+    if kind == "concentration":
+        # 集中度不改善 → 移出批量（不降级：换个目标巷道救不了「已集中 / 共占」）。
+        return ConsolidationPlanResult(moved_out_reason=message)
+    if len(candidates) < 2:
+        # 只有一条巷道且 cap 不足：无次选可退，直接移出批量。
+        return ConsolidationPlanResult(moved_out_reason=message)
+
+    second_aisle = candidates[1]
+    second_plan, second_fail = _consolidate_to(
+        material_code=material_code,
+        batch_no=batch_no,
+        profile=profile,
+        batch_plates_by_aisle=batch_plates_by_aisle,
+        available=available,
+        target=second_aisle,
+    )
+    if second_plan is not None:
+        second_plan["degrade_reason"] = (
+            f"主巷道 {main_aisle} 容量不足，降级至次选巷道 {second_aisle}"
+        )
+        return ConsolidationPlanResult(plan=second_plan)
+
+    _, second_message = second_fail  # type: ignore[misc]
+    return ConsolidationPlanResult(
+        moved_out_reason=(
+            f"主巷道 {main_aisle} 容量不足（{message}）；"
+            f"次选巷道 {second_aisle} 亦不可行（{second_message}），移出批量"
+        )
+    )
 
 
 def confirm_relocate(

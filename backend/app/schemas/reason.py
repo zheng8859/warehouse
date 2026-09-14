@@ -14,8 +14,8 @@
 
 ## 本文件当前落地的部分（阶段三）
 
-**结构 1（§10.1）、结构 2（§10.2）已落地**；**结构 3~6 仍是骨架** ——
-它们分别属移库（阶段四）、导入回执（阶段四）、cap 快照（阶段四）、KPI 卡片（阶段六）。不预先补齐的理由：
+**结构 1（§10.1）、结构 2（§10.2）、结构 3（§10.3）已落地**；**结构 4~6 仍是骨架** ——
+它们分别属导入回执（阶段四）、cap 快照（阶段四）、KPI 卡片（阶段六）。不预先补齐的理由：
 那几类的字段要等各自的实现去校准，先写一份没人用的契约，只会在实现时变成
 「改也不是、不改也不是」的第二事实来源。
 
@@ -331,3 +331,99 @@ class BatchPickSequenceResponse(BaseModel):
     snapshot_version: str = Field(pattern=_SNAPSHOT_VERSION_PATTERN)
     plans: list[PickPlanItem] = Field(default_factory=list)
     not_in_stock: list[str] = Field(default_factory=list)
+
+
+# ------------------------------------------------------------------ 结构 3：收拢方案（17 §10.3）
+
+class ConsolidationCrossAisle(BaseModel):
+    """收拢方案里「同物料跨巷道数」的前后对照（17 §10.3 的 `expected_cross_aisle`）。"""
+
+    #: 收拢前 = `InventoryProfile.cross_aisle_count`（该物料当前占用的巷道数）。
+    before: int = Field(ge=0)
+    #: 收拢后 = `before` − 收拢后变空的 `from_aisle` 数（变空判据见 `_consolidate_to`）。
+    after: int = Field(ge=0)
+
+
+class ConsolidationPlan(BaseModel):
+    """一条移库收拢方案（17 §10.3）：`batch_no` / `material_code` / `from_aisles` /
+    `target_aisle` / `plates` / `expected_cross_aisle{before,after}` / `batch_unchanged`。
+
+    追加两个簿记字段（只加不删，17 §10.3 的消费方忽略未知键）：
+    - `degrade_reason`：主巷道 cap 不足降级到次选巷道时写明原因（降级不静默，design.md D2）。
+    - `snapshot_version`：本方案基于的库存视图版本（design.md D3，随方案版本化）——
+      也是幂等键的一部分（D4）。它同时是 `RecommendationPlan.payload_json` 的形状与
+      响应 `plans[]` 元素的基形。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    batch_no: str = Field(min_length=1)
+    material_code: str = Field(min_length=1)
+    #: 待收拢的散落巷道，按巷道号升序。方案必非空（否则就是「已集中」，走 moved_out）。
+    from_aisles: list[str] = Field(min_length=1)
+    target_aisle: str = Field(min_length=1)
+    #: 散落板总数 = `from_aisles` 板数之和（v1 板 = 格，与 `to_occupied_cells` 同口径）。
+    plates: int = Field(ge=0)
+    expected_cross_aisle: ConsolidationCrossAisle
+    #: 移库不改批号（CLAUDE.md §四）—— 结构性恒真，这里再钉一道。
+    batch_unchanged: bool = True
+    #: 主巷道容量不足降级至次选巷道时的原因；非降级方案为 None。
+    degrade_reason: str | None = Field(default=None, min_length=1)
+    snapshot_version: str = Field(pattern=_SNAPSHOT_VERSION_PATTERN)
+
+    @model_validator(mode="after")
+    def _consolidation_invariants(self) -> ConsolidationPlan:
+        if self.expected_cross_aisle.after >= self.expected_cross_aisle.before:
+            raise ValueError("收拢方案必须改善集中度（expected_cross_aisle.after < before）")
+        if self.batch_unchanged is not True:
+            raise ValueError("移库不改批号（batch_unchanged 必须为 True）")
+        return self
+
+
+class RelocatePlanItem(ConsolidationPlan):
+    """响应 `plans[]` 里的一条方案：`ConsolidationPlan` + 对应回请求的作业单与方案行。
+
+    `job_order_id` / `plan_id` 是响应侧标识（对齐 `PlanItem` / `PickPlanItem`），
+    **不进 payload_json** —— 方案归属是 `RecommendationPlan` 的列，不是 17 §10.3 的内容。
+    """
+
+    job_order_id: str = Field(min_length=1)
+    plan_id: int
+
+
+class RelocateMovedOutItem(BaseModel):
+    """响应 `moved_out[]` 里的一条：收拢不可行、移出批量的作业单 + 原因。
+
+    「降级不静默」的对外出口：主巷道 cap 不足且次选也不可行、或收拢后集中度不改善，
+    该单**不出方案**（停留 `PENDING`），只在这里写清为什么。
+    """
+
+    job_order_id: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+
+
+class BatchRelocatePlanRequest(BaseModel):
+    """`POST /api/job/batch/relocate-plan` 的请求体（D2/D6）。
+
+    与 `BatchPickSequenceRequest` 同一形态：`job_order_ids` 必填非空、`snapshot_version`
+    是调用方声明（不是筛选器）。上限 `MAX_JOB_ORDERS_PER_BATCH` 只作常量、判在路由层。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    warehouse_id: str = Field(min_length=1, max_length=32)
+    snapshot_version: str | None = Field(default=None, pattern=_SNAPSHOT_VERSION_PATTERN)
+    job_order_ids: list[str]
+
+
+class BatchRelocatePlanResponse(BaseModel):
+    """`POST /api/job/batch/relocate-plan` 的响应体（D6：分列 `plans[]` + `moved_out[]`）。
+
+    `plans[]` = 出方案并迁 `PLANNED` 的单；`moved_out[]` = 收拢不可行、移出批量的单
+    （含原因）。两列**互斥**：一张单要么出方案、要么移出批量，不会同列。
+    """
+
+    bulk_batch_no: str = Field(min_length=1)
+    snapshot_version: str = Field(pattern=_SNAPSHOT_VERSION_PATTERN)
+    plans: list[RelocatePlanItem] = Field(default_factory=list)
+    moved_out: list[RelocateMovedOutItem] = Field(default_factory=list)
