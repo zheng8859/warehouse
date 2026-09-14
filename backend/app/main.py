@@ -11,9 +11,11 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api.middleware import AuthMiddleware
 from app.api.routes import (
@@ -32,6 +34,10 @@ from app.core.db import SessionLocal
 from app.core.errors import DomainError, error_body
 
 logger = logging.getLogger(__name__)
+
+#: 前端静态页目录（零构建 Vanilla，阶段七文档 31）。用 `__file__` 推导而非相对路径：
+#: `cd backend && uvicorn ...` 与 CI/测试的 CWD 未必都在 backend 下，相对路径会随 CWD 漂移。
+FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 
 #: 路由模块清单。顺序不影响匹配（路径不重叠），但保持与 19 附录B 一致便于对照。
 ROUTE_MODULES = (
@@ -86,9 +92,33 @@ def create_app() -> FastAPI:
             "开启" if settings.cold_path_enabled else "关闭",
         )
 
-    # 阶段七（文档 31）在此挂载前端静态页：
-    #   app.mount("/", StaticFiles(directory="../frontend", html=True), name="frontend")
-    # 前端为零构建 Vanilla HTML/CSS/JS，不引入打包步骤。
+    # 阶段七（文档 31）挂载前端静态页：零构建 Vanilla HTML/CSS/JS，不引入打包步骤。
+    # 前端页用相对 `fetch`（assets/app.js 的 `window.api` 统一补 `/api` 前缀），故必须由
+    # 后端同源托管。
+    #
+    # **不把 StaticFiles 挂到 "/"**：`Mount("/")` 按路径前缀匹配一切路径，会把 `/api/*`
+    # 上「方法不匹配(405)」与「未命中(404)」的请求一并吞成静态 404，破坏 auth 层语义
+    # （tests/api/test_auth.py 7.6/7.7 四场景：`GET /api/auth/login` 须 405、加探针路由须可达）。
+    # 故这里**显式**登记入口页与静态资源，把 `/api/*` 留给路由栈：
+    # 静态资源走 `/assets` 挂载，页面走 `/` 与 `/{page}.html` 两条只读路由。
+    app.mount(
+        "/assets",
+        StaticFiles(directory=str(FRONTEND_DIR / "assets")),
+        name="frontend-assets",
+    )
+
+    @app.get("/", include_in_schema=False)
+    def _frontend_index() -> FileResponse:
+        return FileResponse(FRONTEND_DIR / "index.html")
+
+    @app.get("/{page}.html", include_in_schema=False)
+    def _frontend_page(page: str) -> FileResponse:
+        # `page` 是路径参数默认转换器 `[^/]+`，不含 `/`，故不会路径穿越；但未知页面要
+        # 404 而不是 500 —— FileResponse 对缺失文件抛 RuntimeError。
+        target = FRONTEND_DIR / f"{page}.html"
+        if not target.is_file():
+            raise HTTPException(status_code=404, detail="Not Found")
+        return FileResponse(target)
 
     return app
 
