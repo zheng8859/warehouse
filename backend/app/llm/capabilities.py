@@ -28,8 +28,10 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
+import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
@@ -44,6 +46,8 @@ from app.llm.quota import (
     record_tokens,
 )
 from app.llm.redact import redact
+from app.models.linkage import InventoryItem, Snapshot
+from app.services.kpi import same_material_cross_aisle_mean
 
 
 class ColdPathRejected(Exception):
@@ -127,3 +131,93 @@ def run_cold_path(
         )
     finally:
         gate.release()
+
+
+# ---------------------------------------------------------------------------
+# ① KPI 解读（只读，P1）—— 规则聚合 → LLM 叙事，数值不改写。
+# ---------------------------------------------------------------------------
+
+
+def build_kpi_rule(
+    *,
+    cross_aisle_mean: float,
+    weighted_concentration: int,
+    adoption_rate: float,
+    material_code: str | None = None,
+) -> dict[str, Any]:
+    """① 规则卡片：聚合指标挂在白名单键 `metrics` 下。
+
+    `metrics` 是 `redact` 的正向白名单键，出境不被剥掉；其内部三个数值是规则侧算的
+    数，LLM 只叙事、不得改写。这样「出站提示词里的数值」与「rule 卡片的数值」同源，
+    spec ① 的「数值一致」由结构保证。
+    """
+    metrics: dict[str, Any] = {
+        "same_material_cross_aisle_mean": cross_aisle_mean,
+        "weighted_concentration": weighted_concentration,
+        "adoption_rate": adoption_rate,
+    }
+    rule: dict[str, Any] = {"metrics": metrics}
+    if material_code is not None:
+        rule["material_code"] = material_code
+    return rule
+
+
+def _latest_snapshot_id(session: Session, *, warehouse_id: str) -> int | None:
+    """当前（最新版本号）快照 id；无快照 → None。"""
+    return session.scalars(
+        sa.select(Snapshot.id)
+        .where(Snapshot.warehouse_id == warehouse_id)
+        .order_by(Snapshot.version_no.desc(), Snapshot.id.desc())
+        .limit(1)
+    ).one_or_none()
+
+
+def kpi_interpret(
+    session: Session,
+    *,
+    warehouse_id: str,
+    settings: Settings | None = None,
+    snapshot_id: int | None = None,
+    period: str | None = None,
+    gate: ConcurrencyGate | None = None,
+    backend: Backend | None = None,
+    timeout_s: float | None = None,
+) -> DualProduct:
+    """① KPI 解读：规则聚合（同物料跨巷道均值）→ 脱敏 → 网关 → 双产物。
+
+    `weighted_concentration` / `adoption_rate` 的聚合属**阶段六收编点**（KpiSnapshot
+    全量聚合落地时补齐 DO 加权集中度与推荐日志采纳率），本阶段最小口径给 0 —— 结构
+    稳定、只等阶段六填数。数值一旦算出来就与 `rule` 同源，LLM 只叙事。
+    """
+    settings = settings if settings is not None else Settings()
+    period = period if period is not None else datetime.now().strftime("%Y-%m")
+
+    sid = snapshot_id if snapshot_id is not None else _latest_snapshot_id(
+        session, warehouse_id=warehouse_id
+    )
+    cross_aisle_mean = 0.0
+    if sid is not None:
+        rows = session.execute(
+            sa.select(InventoryItem.material_code, InventoryItem.location_code).where(
+                InventoryItem.snapshot_id == sid
+            )
+        )
+        cross_aisle_mean = same_material_cross_aisle_mean(
+            (material, location[:2]) for material, location in rows
+        )
+
+    rule = build_kpi_rule(
+        cross_aisle_mean=cross_aisle_mean,
+        weighted_concentration=0,
+        adoption_rate=0.0,
+    )
+    return run_cold_path(
+        settings=settings,
+        session=session,
+        warehouse_id=warehouse_id,
+        period=period,
+        rule=rule,
+        gate=gate,
+        backend=backend,
+        timeout_s=timeout_s,
+    )
