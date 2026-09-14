@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.api.permissions import Permission
 from app.core.config import settings
 from app.core.enums import AccountStatus, Role
 from app.core.security import create_session_token
@@ -201,3 +202,69 @@ def test_ai_notice_skips_none() -> None:
         degraded_reason="provider_unconfigured",
     )
     assert response.model_dump()["ai"] is None
+
+
+# ------------------------------------------------------------------ 端点级鉴权（tasks.md 5.3）
+
+@pytest.mark.parametrize(
+    "path, body, permission",
+    [
+        (
+            "/api/llm/kpi/interpret",
+            {"warehouse_id": settings.warehouse_code, "period": "2026-09"},
+            Permission.AI_ASSIST,
+        ),
+        (
+            "/api/llm/deviation/attribute",
+            {"warehouse_id": settings.warehouse_code, "material_code": "M1"},
+            Permission.AI_ASSIST,
+        ),
+        (
+            "/api/llm/weight/tune",
+            {"warehouse_id": settings.warehouse_code},
+            Permission.AI_ASSIST,
+        ),
+        (
+            "/api/llm/weight/apply",
+            {"warehouse_id": settings.warehouse_code, "suggestion_id": 1},
+            Permission.AI_WEIGHT_UPDATE,
+        ),
+        (
+            "/api/llm/relocate/propose",
+            {"warehouse_id": settings.warehouse_code, "material_code": "M1"},
+            Permission.AI_RELOCATE_PROPOSE,
+        ),
+    ],
+)
+def test_planner_lacks_ai_permissions_403(job_api, monkeypatch, path, body, permission) -> None:
+    """计划员对 `ai.*` 全无（spec `permission`「ai.* 仅仓管/主管/管理员」）→ 403。"""
+    _enable_cold_path(monkeypatch)
+    planner = _headers_for(job_api, Role.PLANNER)
+    response = job_api.client.post(path, json=body, headers=planner)
+    assert response.status_code == 403
+    assert response.json()["error"] == "permission_denied"
+
+
+@pytest.mark.parametrize(
+    "role", [Role.WAREHOUSE_KEEPER, Role.PLANNER, Role.SUPERVISOR]
+)
+def test_toggle_is_admin_only_403(job_api, role) -> None:
+    """`ai.toggle` 仅管理员：仓管 / 计划 / 主管调 toggle → 403。"""
+    non_admin = _headers_for(job_api, role)
+    response = job_api.client.post(
+        "/api/llm/toggle", json={"enabled": True}, headers=non_admin
+    )
+    assert response.status_code == 403
+    assert response.json()["error"] == "permission_denied"
+
+
+def test_cold_path_guard_precedes_permission(job_api) -> None:
+    """开关关闭时，即便无 `ai.*` 权限的角色也先得 409（spec「任意角色 → 409」），而非 403。"""
+    planner = _headers_for(job_api, Role.PLANNER)
+    response = job_api.client.post(
+        "/api/llm/kpi/interpret",
+        json={"warehouse_id": settings.warehouse_code},
+        headers=planner,
+    )
+    assert response.status_code == 409
+    assert response.json()["error"] == "cold_path_disabled"
