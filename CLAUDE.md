@@ -251,11 +251,13 @@ scope: model / auth / engine / job / import / cap / eval / ui / env / ai / golde
 `warehouse_keeper` 仓管员 · `planner` 计划员 · `supervisor` 主管 · `admin` 管理员。
 
 矩阵的权威定义在 `app/api/permissions.py`（`13` §2.2 的逐条搬运）。
-**v1 事实：细粒度 RBAC 部分落地** —— 角色菜单可见性 + 写操作二次确认，外加
-`POST /api/allocate/batch` 的端点级资源鉴权（`inbound.operate`，仅仓管员/管理员，经
-`require_permission` 依赖）；该矩阵是目标模型，其余端点的 RBAC（M5）落地后由后端 checker 强制。
+**v1 事实：细粒度 RBAC 部分落地** —— 角色菜单可见性 + 写操作二次确认，外加端点级资源
+鉴权（经 `require_permission` 依赖）：`POST /api/allocate/batch`（`inbound.operate`，仅
+仓管员/管理员）与冷路径 `POST /api/llm/*` 六端点（`ai.assist` / `ai.weight.update` /
+`ai.relocate.propose` → 仓管员/主管/管理员，`ai.toggle` → 仅管理员；`toggle` 之外的端点
+先答 409 开关守卫、再答 403 权限）；该矩阵是目标模型，其余端点的 RBAC（M5）落地后由后端 checker 强制。
 
-三层检查：认证中间件（v1，401）→ PermissionChecker（`/api/allocate/batch` 已生效，其余端点路线图，403）→ 操作确认（v1，前端确认卡）。
+三层检查：认证中间件（v1，401）→ PermissionChecker（`/api/allocate/batch` 与 `/api/llm/*` 已生效，其余端点路线图，403）→ 操作确认（v1，前端确认卡）。
 白名单：`/api/auth/login`、`/health`、`/docs`、`/openapi.json`。
 
 ---
