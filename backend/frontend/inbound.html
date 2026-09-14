@@ -195,6 +195,13 @@
     }
   }
 
+  async function refreshLockVersions() {
+    // 不带收窄筛选地重读入库队列，只刷新 lockByJob 的乐观锁版本，不碰已渲染的队列。
+    // 必须不带筛选：若沿用 status=PENDING，刚被分配成 PLANNED 的单会被滤掉，反而读不到新版本。
+    const fresh = await window.api('/jobs?type=INBOUND&warehouse_id=' + WID, { method: 'GET' });
+    (fresh || []).forEach(o => { lockByJob[o.job_order_id] = o.lock_version; });
+  }
+
   function renderQueue() {
     if (!orders || !orders.length) {
       setState(queueEl, 'empty', { text: '请先导入 PO' });
@@ -252,6 +259,10 @@
       const res = await window.api('/allocate/batch', {
         method: 'POST', body: { warehouse_id: WID, job_order_ids: ids, snapshot_version: null }
       });
+      // allocate/batch 会把 PENDING→PLANNED 并推进 lock_version 一格（allocate.py L519/L524），
+      // 而 lockByJob 里仍是队列读到的旧版本。若不重读，「批量执行落位」会带着过期版本号被
+      // confirm 的乐观锁 409 拒掉（confirm.py L103-L104）。故先刷新版本，再组装 plans。
+      await refreshLockVersions();
       plans = (res.plans || []).map(p => Object.assign({}, p, { lock_version: lockByJob[p.job_order_id], rejected: false }));
       renderPlans();
     } catch (e) {

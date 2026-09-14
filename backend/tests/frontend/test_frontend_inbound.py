@@ -55,6 +55,17 @@ def test_confirm_card_only_bound_to_batch_confirm_button():
     assert INBOUND.count("window.api('/allocate/batch'") == 1
 
 
+def test_lock_version_refreshed_after_allocate():
+    """分配后重读队列刷新 lock_version，避免「批量执行落位」带过期版本被乐观锁 409。
+
+    allocate/batch 把 PENDING→PLANNED 并推进 lock_version；若沿用队列读到时的旧版本提交
+    confirm，`confirm._confirm_and_execute` 的乐观锁（bump_lock_version）会抛 StateConflict。
+    """
+    assert "async function refreshLockVersions" in INBOUND
+    # 分配成功后、组装 plans 之前调用重读，且重读不带收窄筛选（status=PENDING 会把已分配单滤掉）。
+    assert "await refreshLockVersions()" in INBOUND
+
+
 def test_four_regions_still_present():
     """`.ord` / `.btab` / `.reason` / `.postbar` 四区仍在。"""
     for cls in ('class="ord', 'class="btab"', 'class="reason', 'class="postbar"'):
