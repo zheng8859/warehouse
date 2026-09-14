@@ -22,6 +22,7 @@ from app.api.routes import (
     allocate,
     auth,
     cap,
+    conversation,
     health,
     import_,
     job,
@@ -48,6 +49,7 @@ ROUTE_MODULES = (
     allocate,
     job,
     kpi,
+    conversation,
     llm,
     health,
 )

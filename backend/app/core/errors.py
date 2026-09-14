@@ -83,6 +83,18 @@ class ValidationBlocked(DomainError):
     code = "validation_blocked"
 
 
+class ColdPathDisabled(DomainError):
+    """冷路径开关关闭（`cold_path_enabled=false`）—— 可纠正客户端错误：先开开关再调用。
+
+    与「LLM 侧失败降级」（200 + `degraded_reason`）是两种处置：开关关闭 = 「能力整体
+    不可用」是 409（前端据此提示去开开关）；LLM 没吐字 = 「能力开了但模型不可用」是
+    降级（200 + 规则卡片）。两者不能都 200（design.md D2）。
+    """
+
+    http_status = 409
+    code = "cold_path_disabled"
+
+
 def error_body(exc: DomainError) -> dict[str, Any]:
     """领域异常 → 响应体。**唯一定义处**。
 
