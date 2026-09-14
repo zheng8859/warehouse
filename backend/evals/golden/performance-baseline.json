@@ -1,0 +1,58 @@
+[
+  {
+    "id": "golden_053",
+    "layer": "regression",
+    "dimension": "性能基线",
+    "eval_type": "l3",
+    "input": "单物料评分",
+    "expected": "耗时 ≤1s",
+    "assertion": "threshold",
+    "tolerance": {"max_ms": 1000},
+    "baseline_value": null,
+    "comparison": null,
+    "tags": ["perf", "slow"],
+    "source": "性能 SLA 单物料评分 ≤1s"
+  },
+  {
+    "id": "golden_054",
+    "layer": "regression",
+    "dimension": "性能基线",
+    "eval_type": "l3",
+    "input": "cap 查询",
+    "expected": "耗时 ≤100ms",
+    "assertion": "threshold",
+    "tolerance": {"max_ms": 100},
+    "baseline_value": null,
+    "comparison": null,
+    "tags": ["perf"],
+    "source": "性能 SLA cap 查询 ≤100ms"
+  },
+  {
+    "id": "golden_056",
+    "layer": "regression",
+    "dimension": "性能基线",
+    "eval_type": "l3",
+    "input": "落位写入",
+    "expected": "耗时 ≤200ms",
+    "assertion": "threshold",
+    "tolerance": {"max_ms": 200},
+    "baseline_value": null,
+    "comparison": null,
+    "tags": ["perf"],
+    "source": "性能 SLA 落位写入 ≤200ms"
+  },
+  {
+    "id": "golden_058",
+    "layer": "regression",
+    "dimension": "性能基线",
+    "eval_type": "l3",
+    "input": "大队列批量分配",
+    "expected": "P95 耗时 < 阈值",
+    "assertion": "threshold",
+    "tolerance": {"p95_max_ms": 3000},
+    "baseline_value": null,
+    "comparison": null,
+    "tags": ["perf", "slow", "regression-baseline"],
+    "source": "性能 SLA；20号 批量分配"
+  }
+]

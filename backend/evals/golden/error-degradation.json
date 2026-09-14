@@ -1,0 +1,62 @@
+[
+  {
+    "id": "golden_031",
+    "layer": "boundary",
+    "dimension": "错误恢复降级",
+    "eval_type": "l1",
+    "input": "近站台 cap 不足",
+    "expected": "降级到次近巷道，degrade_reason 可见",
+    "assertion": "exact",
+    "tolerance": {},
+    "tags": ["degrade", "cap"],
+    "source": "14号 降级链"
+  },
+  {
+    "id": "golden_032",
+    "layer": "boundary",
+    "dimension": "错误恢复降级",
+    "eval_type": "l1",
+    "input": "非 A 类物料尝试占用近站台预留池",
+    "expected": "拒绝占用预留池",
+    "assertion": "exact",
+    "tolerance": {},
+    "tags": ["reserved", "abc"],
+    "source": "14号 近站台预留池"
+  },
+  {
+    "id": "golden_033",
+    "layer": "boundary",
+    "dimension": "错误恢复降级",
+    "eval_type": "l1",
+    "input": "分配 cap 超过巷道总格",
+    "expected": "整体回滚（100% 触发），不落台账",
+    "assertion": "exact",
+    "tolerance": {"rollback": 1.0},
+    "tags": ["cap", "rollback", "regression-baseline"],
+    "source": "20号 AC；14号 cap 竞价"
+  },
+  {
+    "id": "golden_034",
+    "layer": "boundary",
+    "dimension": "错误恢复降级",
+    "eval_type": "l1",
+    "input": "多物料竞价同一巷道",
+    "expected": "竞争分配结果不超 cap",
+    "assertion": "exact",
+    "tolerance": {},
+    "tags": ["allocator", "cap"],
+    "source": "14号 批量竞争分配"
+  },
+  {
+    "id": "golden_035",
+    "layer": "boundary",
+    "dimension": "错误恢复降级",
+    "eval_type": "l1",
+    "input": "四级降级链全触发",
+    "expected": "逐级降级至溢出区兜底，理由写明 degrade_reason",
+    "assertion": "exact",
+    "tolerance": {},
+    "tags": ["degrade", "reason"],
+    "source": "14号 四级降级链"
+  }
+]

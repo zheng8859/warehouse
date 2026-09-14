@@ -1,0 +1,50 @@
+[
+  {
+    "id": "golden_041",
+    "layer": "boundary",
+    "dimension": "指令可靠性",
+    "eval_type": "l2",
+    "input": "写操作（落位/出库确认/移库）提交",
+    "expected": "前端弹二次确认卡，未确认不执行",
+    "assertion": "exact",
+    "tolerance": {},
+    "tags": ["confirm", "write-intent", "regression-baseline"],
+    "source": "13号 操作确认；决策权在人"
+  },
+  {
+    "id": "golden_042",
+    "layer": "boundary",
+    "dimension": "指令可靠性",
+    "eval_type": "l2",
+    "input": "L2 写意图路由",
+    "expected": "确认后才产生台账，未确认零台账",
+    "assertion": "exact",
+    "tolerance": {},
+    "tags": ["confirm", "write-intent", "zero-ledger"],
+    "source": "10号 写意图零台账"
+  },
+  {
+    "id": "golden_043",
+    "layer": "boundary",
+    "dimension": "指令可靠性",
+    "eval_type": "l2",
+    "input": "AI 建议产出",
+    "expected": "渲染琥珀色 + 免责标注，不渲染为系统结论",
+    "assertion": "exact",
+    "tolerance": {},
+    "tags": ["ai-notice", "cold-path"],
+    "source": "10号 AI Notice"
+  },
+  {
+    "id": "golden_044",
+    "layer": "boundary",
+    "dimension": "指令可靠性",
+    "eval_type": "l2",
+    "input": "推荐结果查询",
+    "expected": "决策可追溯：每巷 × 每因子取值可见",
+    "assertion": "exact",
+    "tolerance": {},
+    "tags": ["traceability", "p0"],
+    "source": "14号 推荐理由契约；20号 决策可追溯"
+  }
+]

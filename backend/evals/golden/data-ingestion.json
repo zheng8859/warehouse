@@ -1,0 +1,74 @@
+[
+  {
+    "id": "golden_025",
+    "layer": "boundary",
+    "dimension": "数据接入质量",
+    "eval_type": "l2",
+    "input": "xlsx 库位号被数值化丢前导 0",
+    "expected": "按文本读回 6 位库位号",
+    "assertion": "exact",
+    "tolerance": {},
+    "tags": ["ingest", "location-code"],
+    "source": "16号 A.1 INV 模版；编码约定"
+  },
+  {
+    "id": "golden_026",
+    "layer": "boundary",
+    "dimension": "数据接入质量",
+    "eval_type": "l2",
+    "input": "日期以序列号存在",
+    "expected": "先转日期，不越界不误读",
+    "assertion": "exact",
+    "tolerance": {},
+    "tags": ["ingest", "date"],
+    "source": "16号 日期序列号"
+  },
+  {
+    "id": "golden_027",
+    "layer": "boundary",
+    "dimension": "数据接入质量",
+    "eval_type": "l2",
+    "input": "同一文件重复导入",
+    "expected": "去重，不重复写入",
+    "assertion": "exact",
+    "tolerance": {},
+    "tags": ["ingest", "dedup"],
+    "source": "16号 去重"
+  },
+  {
+    "id": "golden_028",
+    "layer": "boundary",
+    "dimension": "数据接入质量",
+    "eval_type": "l2",
+    "input": "ABC 分类窗口数据已知",
+    "expected": "ABC 分档正确",
+    "assertion": "exact",
+    "tolerance": {},
+    "tags": ["ingest", "abc"],
+    "source": "16号 §360 ABC 统计窗口"
+  },
+  {
+    "id": "golden_029",
+    "layer": "boundary",
+    "dimension": "数据接入质量",
+    "eval_type": "l2",
+    "input": "四层校验第 4 层失败",
+    "expected": "阻断导入，不落库",
+    "assertion": "exact",
+    "tolerance": {},
+    "tags": ["ingest", "validate"],
+    "source": "16号 四层校验"
+  },
+  {
+    "id": "golden_030",
+    "layer": "boundary",
+    "dimension": "数据接入质量",
+    "eval_type": "l2",
+    "input": "缺少必填列",
+    "expected": "四层校验阻断，导入会话标记失败，不落库",
+    "assertion": "exact",
+    "tolerance": {},
+    "tags": ["ingest", "block"],
+    "source": "16号 四层校验"
+  }
+]

@@ -1,0 +1,58 @@
+[
+  {
+    "id": "golden_049",
+    "layer": "regression",
+    "dimension": "移库有效性",
+    "eval_type": "l3",
+    "input": "移库建议生成",
+    "expected": "三档方案 + 量化代价正确",
+    "assertion": "exact",
+    "tolerance": {},
+    "baseline_value": null,
+    "comparison": null,
+    "tags": ["relocate", "cold-path"],
+    "source": "10号 移库多方案"
+  },
+  {
+    "id": "golden_051",
+    "layer": "regression",
+    "dimension": "移库有效性",
+    "eval_type": "l3",
+    "input": "移库方案提交",
+    "expected": "三重校验通过才采纳",
+    "assertion": "exact",
+    "tolerance": {},
+    "baseline_value": null,
+    "comparison": null,
+    "tags": ["relocate", "validate"],
+    "source": "10号 移库三重校验"
+  },
+  {
+    "id": "golden_052",
+    "layer": "regression",
+    "dimension": "移库有效性",
+    "eval_type": "l3",
+    "input": "移库执行",
+    "expected": "台账更新巷道，批号不变",
+    "assertion": "exact",
+    "tolerance": {},
+    "baseline_value": null,
+    "comparison": null,
+    "tags": ["relocate", "ledger"],
+    "source": "15号 移库作业"
+  },
+  {
+    "id": "golden_055",
+    "layer": "regression",
+    "dimension": "移库有效性",
+    "eval_type": "l3",
+    "input": "移库前后同物料跨巷道对比",
+    "expected": "移库后跨巷道下降（趋势向好）",
+    "assertion": "threshold",
+    "tolerance": {},
+    "baseline_value": 3.0,
+    "comparison": "trend_better",
+    "tags": ["relocate", "trend", "regression-baseline"],
+    "source": "18号 同物料跨巷道；20号 趋势向好"
+  }
+]

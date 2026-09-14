@@ -1,0 +1,44 @@
+[
+  {
+    "id": "golden_057",
+    "layer": "regression",
+    "dimension": "KPI基线达标",
+    "eval_type": "l3",
+    "input": "同批跨巷道数已知",
+    "expected": "同批跨巷道 ≤3 达标判定正确",
+    "assertion": "threshold",
+    "tolerance": {"cross_aisle_max": 3},
+    "baseline_value": null,
+    "comparison": null,
+    "tags": ["kpi", "threshold"],
+    "source": "18号 同批跨巷道 ≤3"
+  },
+  {
+    "id": "golden_059",
+    "layer": "regression",
+    "dimension": "KPI基线达标",
+    "eval_type": "l3",
+    "input": "采纳数已知",
+    "expected": "采纳率 ≥60% 达标判定正确",
+    "assertion": "threshold",
+    "tolerance": {"adoption_rate_min": 0.60},
+    "baseline_value": null,
+    "comparison": null,
+    "tags": ["kpi", "threshold"],
+    "source": "18号 推荐采纳率 ≥60%"
+  },
+  {
+    "id": "golden_060",
+    "layer": "regression",
+    "dimension": "KPI基线达标",
+    "eval_type": "l3",
+    "input": "合成台账的同物料/同批跨巷道",
+    "expected": "同物料 ≤5 且同批 ≤3 组合达标，不劣化",
+    "assertion": "threshold",
+    "tolerance": {"cross_aisle_max": 5, "same_batch_max": 3},
+    "baseline_value": 5.0,
+    "comparison": "no_regression",
+    "tags": ["kpi", "threshold", "regression-baseline"],
+    "source": "18号 同物料/同批跨巷道；20号"
+  }
+]

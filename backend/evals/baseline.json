@@ -2,34 +2,54 @@
   "_comment": "Evals 基线。骨架阶段只放了试点前 Golden 基线（20 号 §7 数据基线采集），各层通过率由阶段六（文档 30）填入。",
   "_source": "20-评测体系设计 §7 / §九；18-KPI 与验收度量设计 附录A",
   "_note": "试点为前后对比（预热1周/试运行2周/稳定1周），不做 A/B —— 单厂 GTJ10036 单一活跃队列无法拆流量对照。",
-
   "factory_code": "GTJ10036",
-  "baseline_captured": null,
+  "baseline_captured": "2026-09-14T17:37:42.393784+00:00",
   "baseline_window_months": 2,
-
   "golden": {
     "_comment": "现行分散基线；作为前后对比的锚点。",
-    "same_material_cross_aisle": { "min": 11.7, "max": 22.4 },
-    "same_batch_cross_aisle": { "min": 5.8, "max": 21.8 },
-    "single_do_cross_aisle": { "min": 6, "max": 8 }
+    "same_material_cross_aisle": {
+      "min": 11.7,
+      "max": 22.4
+    },
+    "same_batch_cross_aisle": {
+      "min": 5.8,
+      "max": 21.8
+    },
+    "single_do_cross_aisle": {
+      "min": 6,
+      "max": 8
+    }
   },
-
   "targets": {
     "_comment": "18 号 §1.2 设计目标 + 20 号 §7.5 Go/No-Go 闸门。",
-    "weighted_concentration_attainment_rate": 0.70,
+    "weighted_concentration_attainment_rate": 0.7,
     "same_material_cross_aisle_max": 5,
     "same_batch_cross_aisle_max": 3,
     "concentration_n": 5,
-    "adoption_rate_min": 0.60,
+    "adoption_rate_min": 0.6,
     "placement_accuracy_min": 0.99,
     "p0_placement_incidents_max": 0,
     "effective_consolidation_batches_per_week_min": 30
   },
-
   "tiers": {
     "_comment": "各层通过率；阶段六填入实测值。",
-    "l1": { "pass_rate": null, "threshold": 0.95, "dimensions": 5, "scenarios": 24 },
-    "l2": { "pass_rate": null, "threshold": 0.90, "dimensions": 4, "scenarios": 20 },
-    "l3": { "pass_rate": null, "threshold": null, "dimensions": 4, "scenarios": 16 }
+    "l1": {
+      "pass_rate": 1.0,
+      "threshold": 0.95,
+      "dimensions": 5,
+      "scenarios": 24
+    },
+    "l2": {
+      "pass_rate": 1.0,
+      "threshold": 0.9,
+      "dimensions": 4,
+      "scenarios": 20
+    },
+    "l3": {
+      "pass_rate": 1.0,
+      "threshold": null,
+      "dimensions": 4,
+      "scenarios": 16
+    }
   }
 }

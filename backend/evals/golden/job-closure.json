@@ -1,0 +1,74 @@
+[
+  {
+    "id": "golden_007",
+    "layer": "baseline",
+    "dimension": "作业闭环一致性",
+    "eval_type": "l2",
+    "input": "入库作业单 PENDING 经确认执行",
+    "expected": "状态转 EXECUTED，台账写入且 cap 同事务扣减",
+    "assertion": "threshold",
+    "tolerance": {},
+    "tags": ["inbound", "ledger", "cap"],
+    "source": "20号 CL-001；15号 入库作业"
+  },
+  {
+    "id": "golden_008",
+    "layer": "baseline",
+    "dimension": "作业闭环一致性",
+    "eval_type": "l2",
+    "input": "出库顺路取",
+    "expected": "只读派生，不触发评分引擎、不重定落位",
+    "assertion": "exact",
+    "tolerance": {},
+    "tags": ["outbound", "readonly"],
+    "source": "20号 CL-003；15号 出库作业"
+  },
+  {
+    "id": "golden_009",
+    "layer": "baseline",
+    "dimension": "作业闭环一致性",
+    "eval_type": "l2",
+    "input": "移库操作",
+    "expected": "只调整所在巷道，批号不变",
+    "assertion": "exact",
+    "tolerance": {},
+    "tags": ["relocate", "batch"],
+    "source": "20号 CL-004；15号 移库作业"
+  },
+  {
+    "id": "golden_010",
+    "layer": "baseline",
+    "dimension": "作业闭环一致性",
+    "eval_type": "l2",
+    "input": "写操作（落位/出库确认/移库）未二次确认",
+    "expected": "拦截且不产生台账记录",
+    "assertion": "exact",
+    "tolerance": {},
+    "tags": ["confirm", "ledger-guard", "regression-baseline"],
+    "source": "20号 CL-002；13号 操作确认"
+  },
+  {
+    "id": "golden_011",
+    "layer": "baseline",
+    "dimension": "作业闭环一致性",
+    "eval_type": "l2",
+    "input": "同一作业单 EXECUTED 后再次写台账",
+    "expected": "状态机守卫拒绝，不重复写台账",
+    "assertion": "exact",
+    "tolerance": {},
+    "tags": ["ledger", "state-machine", "optimistic-lock"],
+    "source": "20号 CL-005；15号 状态机"
+  },
+  {
+    "id": "golden_012",
+    "layer": "baseline",
+    "dimension": "作业闭环一致性",
+    "eval_type": "l2",
+    "input": "快照缺失或过期时出库",
+    "expected": "阻断并提示重新导入，不猜测落位",
+    "assertion": "exact",
+    "tolerance": {},
+    "tags": ["snapshot", "block"],
+    "source": "20号 CL-006；16号 快照"
+  }
+]

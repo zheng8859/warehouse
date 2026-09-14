@@ -56,13 +56,13 @@ repos:
         language: system
         stages: [commit-msg]
 
-      # ⚠️ 阶段六（文档 30）实现 Evals 后取消注释。
-      # 现在启用会让每次 push 都失败 —— evals/run_evals.py 尚未实现任何评测，
-      # 它刻意以退出码 3 失败，以防出现"钩子跑了但什么都没检查"的静默通过。
-      # - id: evals-baseline
-      #   name: Evals 全量 + 基线对比（劣化 >5% 阻断）
-      #   entry: python backend/evals/run_evals.py --tier all --compare backend/evals/baseline.json
-      #   language: system
-      #   pass_filenames: false
-      #   always_run: true
-      #   stages: [pre-push]
+      # 阶段六（文档 30）：pre-push 跑 Evals 全量 + 基线对比（劣化 >5% 阻断）。
+      # entry 的 cwd = 仓库根，故路径相对仓库根；run_evals.py 内部以 Path(__file__)
+      # 锚定 evals 目录，不受 cwd 影响。不含 --run-slow（L3 慢测单独触发，见 design.md D9）。
+      - id: evals-baseline
+        name: Evals 全量 + 基线对比（劣化 >5% 阻断）
+        entry: python backend/evals/run_evals.py --tier all --compare backend/evals/baseline.json
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]

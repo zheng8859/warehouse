@@ -1,0 +1,56 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://warehouse.local/evals/golden/schema.json",
+  "title": "Golden 评测样本",
+  "description": "60 个命名场景（golden_001~060）的单样本结构。事实来源：30-Evals评测体系 §1.2。",
+  "type": "object",
+  "required": ["id", "layer", "dimension", "eval_type", "input", "expected", "assertion", "tolerance", "tags", "source"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^golden_\\d{3}$",
+      "description": "唯一标识 golden_NNN（如 golden_001）"
+    },
+    "layer": {
+      "type": "string",
+      "enum": ["baseline", "boundary", "regression"],
+      "description": "三层：基线 / 边界 / 回归（30号 §1.1）"
+    },
+    "dimension": {
+      "type": "string",
+      "enum": [
+        "评分正确性", "作业闭环一致性", "KPI计量正确性", "配置合规与权限", "安全隔离",
+        "数据接入质量", "错误恢复降级", "分配合规", "指令可靠性",
+        "集中度趋势", "移库有效性", "性能基线", "KPI基线达标"
+      ],
+      "description": "13 维度之一（20号 §五）"
+    },
+    "eval_type": {
+      "type": "string",
+      "enum": ["l1", "l2", "l3"],
+      "description": "运行层（30号 §三）"
+    },
+    "input": { "type": "string", "description": "触发条件描述（物料/ABC/巷道 cap/队列/异常注入）" },
+    "expected": { "type": "string", "description": "期望输出描述（候选巷道集/台账记录/状态码/拦截与否）" },
+    "assertion": {
+      "type": "string",
+      "enum": ["exact", "semantic", "threshold"],
+      "description": "断言类型：精确 / 语义 / 阈值"
+    },
+    "tolerance": {
+      "type": "object",
+      "description": "容差（30号 §二：determinism=1.0 / cross_aisle_max=5 / 等）"
+    },
+    "tags": { "type": "array", "items": { "type": "string" } },
+    "source": { "type": "string", "description": "溯源（20号 SC/CL/AC/TR 编号 + 14/15/18 号公式出处）" },
+    "baseline_value": {
+      "type": ["number", "null"],
+      "description": "回归样本的历史基线值（30号 §1.2，仅回归层）"
+    },
+    "comparison": {
+      "type": ["string", "null"],
+      "enum": ["trend_better", "no_regression", null],
+      "description": "回归样本的比较方式：趋势向好 / 不劣化"
+    }
+  }
+}

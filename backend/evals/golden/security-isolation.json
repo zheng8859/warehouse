@@ -1,0 +1,38 @@
+[
+  {
+    "id": "golden_022",
+    "layer": "baseline",
+    "dimension": "安全隔离",
+    "eval_type": "l2",
+    "input": "核心链路（评分/落位/后验/台账）运行",
+    "expected": "无任何外部 LLM/搜索/API 调用，出域事件 = 0",
+    "assertion": "exact",
+    "tolerance": {"egress_events": 0},
+    "tags": ["egress", "p0", "regression-baseline"],
+    "source": "20号 P0 护栏；10号 核心链路不出域"
+  },
+  {
+    "id": "golden_023",
+    "layer": "baseline",
+    "dimension": "安全隔离",
+    "eval_type": "l2",
+    "input": "冷路径外发前脱敏",
+    "expected": "脱敏后文本不残留敏感字段",
+    "assertion": "exact",
+    "tolerance": {},
+    "tags": ["redact", "cold-path"],
+    "source": "10号 出境脱敏管线"
+  },
+  {
+    "id": "golden_024",
+    "layer": "baseline",
+    "dimension": "安全隔离",
+    "eval_type": "l2",
+    "input": "冷路径开关关闭",
+    "expected": "外部调用次数为 0",
+    "assertion": "exact",
+    "tolerance": {},
+    "tags": ["cold-path", "toggle"],
+    "source": "10号 冷路径开关"
+  }
+]
