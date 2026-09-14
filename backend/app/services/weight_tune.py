@@ -19,13 +19,16 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from datetime import datetime
 from typing import Any
 
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
-from app.models.configuration import WEIGHT_FACTORS
+from app.core.errors import NotFound, StateConflict, ValidationBlocked
+from app.models.configuration import WEIGHT_FACTORS, Capability, WeightConfig
 from app.models.job import PlanKind, RecommendationPlan
+from app.models.llm import AiSuggestion, AiSuggestionStatus
 
 #: ③ 的样本门槛（D12：2026-09-14 拍板覆盖 doc 10 §五/§八 的 >=300）。
 MIN_WEIGHT_TUNE_SAMPLES = 50
@@ -125,3 +128,82 @@ def build_counterfactual(
             for f in WEIGHT_FACTORS
         ],
     }
+
+
+def apply_weight(
+    session: Session,
+    *,
+    warehouse_id: str,
+    suggestion_id: int,
+    changed_by_id: int | None = None,
+    now: datetime | None = None,
+) -> WeightConfig:
+    """③ 采纳落地：读建议 → 规则校验拟采纳权重 → 写新一版 `WeightConfig` → 标记已采纳。
+
+    红线 3 在这里的落点：采纳的是 `AiSuggestion.context_json` 里**规则算的拟采纳权重**
+    （`build_counterfactual` 产出），不是 LLM 叙事文本。校验不过即阻断（不写权重）。
+
+    「保留历史版本、不自动改写」：只**新增**一版（`version_no` = 当前最大 + 1），旧版
+    原样保留可回滚；且只有人在 `ai.weight.update` 下显式调本函数才写 —— 影子模式的
+    PROPOSED 建议自身不生效。
+
+    `effective_at = now`：采纳即当前生效（下次评分用新权重），不预留生效时间 ——
+    「预约生效」不是本能力的口径（`WeightConfig.effective_at` 支持预约，但那由配置侧
+    自持，冷路径采纳落地不做预约）。
+    """
+    now = now if now is not None else datetime.now()
+
+    suggestion = session.get(AiSuggestion, suggestion_id)
+    if suggestion is None or suggestion.warehouse_id != warehouse_id:
+        raise NotFound(
+            f"权重调优建议 {suggestion_id} 不存在或不属于仓库 {warehouse_id}",
+            detail={"suggestion_id": suggestion_id, "warehouse_id": warehouse_id},
+        )
+    if suggestion.capability_kind is not Capability.WEIGHT_TUNING:
+        raise ValidationBlocked(
+            f"建议 {suggestion_id} 不是权重调优建议（实际 {suggestion.capability_kind.value}）",
+            detail={"suggestion_id": suggestion_id},
+        )
+    if suggestion.status is not AiSuggestionStatus.PROPOSED:
+        raise StateConflict(
+            f"建议 {suggestion_id} 已 {suggestion.status.value}，不可重复采纳",
+            detail={"suggestion_id": suggestion_id, "status": suggestion.status.value},
+        )
+
+    proposed = (suggestion.context_json or {}).get("proposed_weights")
+    if not isinstance(proposed, Mapping) or set(proposed) != set(WEIGHT_FACTORS):
+        raise ValidationBlocked(
+            f"建议 {suggestion_id} 的拟采纳权重缺失或键集不为六因子",
+            detail={"suggestion_id": suggestion_id},
+        )
+    for factor in WEIGHT_FACTORS:
+        value = proposed[factor]
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not (0.0 <= value <= 1.0)
+        ):
+            raise ValidationBlocked(
+                f"因子 {factor} 的拟采纳权重 {value!r} 不在 [0,1]",
+                detail={"suggestion_id": suggestion_id, "factor": factor, "value": value},
+            )
+
+    max_version = int(
+        session.scalar(
+            sa.select(sa.func.max(WeightConfig.version_no)).where(
+                WeightConfig.warehouse_id == warehouse_id
+            )
+        )
+        or 0
+    )
+    config = WeightConfig(
+        warehouse_id=warehouse_id,
+        version_no=max_version + 1,
+        effective_at=now,
+        changed_by_id=changed_by_id,
+        **{f"weight_{factor}": float(proposed[factor]) for factor in WEIGHT_FACTORS},
+    )
+    session.add(config)
+    suggestion.status = AiSuggestionStatus.ADOPTED
+    session.flush()
+    return config
