@@ -5,6 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>③ 入库作业 · 成品库位智能推荐</title>
 <link rel="stylesheet" href="assets/styles.css">
+<style>
+  /* 二次确认卡：仅「批量执行落位」触发（CLAUDE.md §四 决策权在人）。 */
+  .confirm-overlay{position:fixed;inset:0;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;z-index:80;}
+  .confirm-overlay.hidden{display:none;}
+  .confirm-overlay .confirm{background:#fff;box-shadow:0 8px 30px rgba(0,0,0,.25);max-width:420px;width:92%;align-self:center;}
+</style>
 </head>
 <body data-page="p3">
 
@@ -42,142 +48,74 @@
     </div>
 
     <div class="filterbar wide">
-      <input class="f-inp" placeholder="搜索物料 / PO号">
-      <select class="f-sel"><option>ABC 全部</option><option>A 类</option><option>B 类</option><option>C 类</option></select>
-      <select class="f-sel"><option>状态 全部</option><option>待推荐</option><option>已落位</option><option>已驳回</option></select>
-      <select class="f-sel"><option>物料 全部</option><option>PET500</option><option>PET600</option><option>辅材</option></select>
-      <select class="f-sel"><option>箱数 全部</option><option>≤40</option><option>41-60</option><option>≥61</option></select>
-      <select class="f-sel"><option>排序·导入序</option><option>箱数 ↓</option><option>ABC 优先</option></select>
-      <button class="btn ghost" style="height:30px;padding:0 12px;">重置</button>
+      <input class="f-inp" id="searchOrder" placeholder="搜索物料 / PO号">
+      <select class="f-sel" id="abcFilter"><option value="">ABC 全部</option><option value="A">A 类</option><option value="B">B 类</option><option value="C">C 类</option></select>
+      <select class="f-sel" id="statusFilter"><option value="">状态 全部</option><option value="PENDING">待推荐</option><option value="PLANNED">已规划</option><option value="EXECUTED">已落位</option><option value="REJECTED">已驳回</option></select>
+      <button class="btn ghost" id="resetFilter" style="height:30px;padding:0 12px;">重置</button>
     </div>
 
     <div class="batchbar">
-      <label class="ck"><input type="checkbox" checked> 全选（筛选结果）</label>
-      <span class="qcount2">已选 <b>3</b> / 筛选 <b>4</b> 单</span>
+      <label class="ck"><input type="checkbox" id="selectAll"> 全选（筛选结果）</label>
+      <span class="qcount2" id="selectedCount">已选 <b>0</b> / 筛选 <b>0</b> 单</span>
       <span class="sp"></span>
-      <button class="btn soft">批量分配</button>
-      <button class="btn warn">批量接受并落位 ▶</button>
-      <button class="btn ghost">导出清单</button>
+      <button class="btn soft" id="allocateBtn">批量分配</button>
     </div>
 
     <div class="wb">
       <!-- 左：生产订单队列 -->
       <div class="col">
-        <div class="ct"><span>生产订单队列（多选）</span><span class="pill">4 单</span></div>
-        <div class="ord ck sel">
-          <label class="ckb"><input type="checkbox" checked></label>
-          <div class="od">
-            <div class="onum">PO-3573743144K55G</div>
-            <div class="mc">MAT-50001</div>
-            <div class="t">PET500 茉莉柚茶</div>
-            <div class="m"><span>60 箱</span><span><b style="color:var(--amber)">A</b></span></div>
-            <div class="st"><span class="pill">待推荐</span></div>
-          </div>
-        </div>
-        <div class="ord ck sel">
-          <label class="ckb"><input type="checkbox" checked></label>
-          <div class="od">
-            <div class="onum">PO-3573743144K55H</div>
-            <div class="mc">MAT-50002</div>
-            <div class="t">PET500 蜂蜜绿茶</div>
-            <div class="m"><span>50 箱</span><span><b style="color:var(--amber)">A</b></span></div>
-            <div class="st"><span class="pill">待推荐</span></div>
-          </div>
-        </div>
-        <div class="ord ck">
-          <label class="ckb"><input type="checkbox"></label>
-          <div class="od">
-            <div class="onum">PO-3573743144K60</div>
-            <div class="mc">MAT-60001</div>
-            <div class="t">PET600 矿泉水</div>
-            <div class="m"><span>40 箱</span><span><b style="color:var(--amber)">A</b></span></div>
-            <div class="st"><span class="pill ok">已落位</span></div>
-          </div>
-        </div>
-        <div class="ord ck sel">
-          <label class="ckb"><input type="checkbox" checked></label>
-          <div class="od">
-            <div class="onum">PO-9X0001</div>
-            <div class="mc">MAT-90001</div>
-            <div class="t">包装辅材</div>
-            <div class="m"><span>80 箱</span><span><b style="color:var(--muted)">C</b></span></div>
-            <div class="st"><span class="pill">待推荐</span></div>
-          </div>
-        </div>
+        <div class="ct"><span>生产订单队列（多选）</span><span class="pill" id="queueCount">0 单</span></div>
+        <div class="ord state empty" id="queue">请先导入 PO</div>
       </div>
 
       <!-- 中：批量推荐方案表 -->
       <div class="col">
-        <div class="ct"><span>批量推荐方案（已选 3 单）</span><span class="pill ok">全部达标</span></div>
-        <table class="btab">
-          <tr>
-            <th>PO</th><th>物料编码</th><th>物料</th><th>ABC</th>
-            <th>箱数</th><th>推荐巷道集</th><th>预测跨巷道</th><th>操作</th>
-          </tr>
-          <tr>
-            <td><b>K55G</b></td><td>MAT-50001</td><td>茉莉柚茶</td><td>A</td><td>60</td>
-            <td><span class="pill ok">{01, 05}</span></td><td>2</td>
-            <td><span class="mini">接受</span><span class="mini ghost" data-reason="r1">微调</span><span class="mini soft">驳回</span></td>
-          </tr>
-          <tr>
-            <td><b>K55H</b></td><td>MAT-50002</td><td>蜂蜜绿茶</td><td>A</td><td>50</td>
-            <td><span class="pill ok">{03, 07}</span></td><td>2</td>
-            <td><span class="mini">接受</span><span class="mini ghost" data-reason="r2">微调</span><span class="mini soft">驳回</span></td>
-          </tr>
-          <tr>
-            <td><b>9X0001</b></td><td>MAT-90001</td><td>包装辅材</td><td>C</td><td>80</td>
-            <td><span class="pill ok">{12, 18}</span></td><td>2</td>
-            <td><span class="mini">接受</span><span class="mini ghost" data-reason="r3">微调</span><span class="mini soft">驳回</span></td>
-          </tr>
-        </table>
-        <div class="note">逐单"微调"下钻推荐理由卡（蓝虚线）；"驳回"移出本次批量；默认沿用系统推荐即"接受"。</div>
+        <div class="ct"><span>批量推荐方案</span><span class="pill" id="planState">未分配</span></div>
+        <div class="state empty" id="planStatus">勾选队列后点击「批量分配」生成方案</div>
+        <div class="tbl-scroll hidden" id="planTableWrap">
+          <table class="btab">
+            <thead>
+              <tr>
+                <th>PO</th><th>物料编码</th><th>物料</th><th>ABC</th>
+                <th>箱数</th><th>推荐巷道集</th><th>预测跨巷道</th><th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="planBody"></tbody>
+          </table>
+        </div>
+        <div class="note">逐单「微调」下钻推荐理由卡（蓝虚线）；「驳回」移出本次批量；默认沿用系统推荐即「接受」。</div>
         <div class="batchfoot">
-          <span>预测平均跨巷道 <b>2.0</b></span>
-          <span>达标率 <b style="color:var(--green)">100%</b></span>
-          <span class="pill ok">全部达标 ✓</span>
-          <button class="btn warn">批量执行落位（写【入库台账】）</button>
+          <span>预测平均跨巷道 <b id="avgCross">—</b></span>
+          <span class="pill" id="planPill">未分配</span>
+          <button class="btn warn" id="batchConfirmBtn">批量执行落位（写【入库台账】）</button>
         </div>
       </div>
 
       <!-- 右：推荐理由下钻（22 号 §三 复用组件 .reason） -->
       <div class="col">
         <div class="ct"><span>推荐理由（下钻）</span><span class="pill">6 因子</span></div>
-        <div class="reason" id="r1">
-          <div class="rt">推荐巷道集 {01, 05} 的依据</div>
-          <div class="rl"><b>ABC 等级</b><span>A 类爆款 → 优先近站台巷道</span></div>
-          <div class="rl"><b>巷道 cap</b><span>01 剩 20 板 · 05 剩 35 板 · 充足</span></div>
-          <div class="rl"><b>既有库位</b><span>MAT-50001 已在 01/05 → 同巷道收拢</span></div>
-          <div class="rl"><b>站台就近</b><span>01/05 就近 A 站台（权重 0.9）</span></div>
-          <div class="rl"><b>批次</b><span>GJP2571221 同批已落 01 → 集中</span></div>
-          <div class="rl"><b>连续性</b><span>01-05 编码相邻 → 叉车动线短</span></div>
-        </div>
-        <div class="reason hidden" id="r2">
-          <div class="rt">推荐巷道集 {03, 07} 的依据</div>
-          <div class="rl"><b>ABC 等级</b><span>A 类 → 近站台</span></div>
-          <div class="rl"><b>巷道 cap</b><span>03 剩 28 · 07 剩 33 板</span></div>
-          <div class="rl"><b>既有库位</b><span>MAT-50002 已在 03/07</span></div>
-          <div class="rl"><b>站台就近</b><span>03/07 近 A 站台</span></div>
-          <div class="rl dim"><b>批次</b><span>新批次，沿用既有分布</span></div>
-          <div class="rl"><b>连续性</b><span>03-07 相邻</span></div>
-        </div>
-        <div class="reason hidden" id="r3">
-          <div class="rt">推荐巷道集 {12, 18} 的依据</div>
-          <div class="rl dim"><b>ABC 等级</b><span>C 类辅材 → 远站台</span></div>
-          <div class="rl"><b>巷道 cap</b><span>12 剩 60 · 18 剩 70 板 · 充裕</span></div>
-          <div class="rl"><b>既有库位</b><span>MAT-90001 已在 12/18</span></div>
-          <div class="rl dim"><b>站台就近</b><span>远站台，权重低</span></div>
-          <div class="rl"><b>批次</b><span>沿用既有</span></div>
-          <div class="rl"><b>连续性</b><span>12-18 相邻</span></div>
-        </div>
+        <div class="reason state empty" id="reasonBox">点击方案行的「微调」查看 6 因子理由</div>
       </div>
     </div>
 
-    <div class="postbar">
+    <div class="postbar" id="postbar">
       <span>后验：本次批量落位</span>
-      <span class="big" style="color:var(--green)">3</span>
+      <span class="big" id="postCount" style="color:var(--green)">—</span>
       <span>张生产订单</span>
-      <span class="pill ok">达标 ✓</span>
-      <span style="color:var(--muted);font-size:12px;">已写入【入库台账】· PO <b style="color:var(--ink)">K55G / K55H / 9X0001</b>（茉莉柚茶 / 蜂蜜绿茶 / 包装辅材）</span>
+      <span class="pill" id="postPill">—</span>
+      <span id="postDetail" style="color:var(--muted);font-size:12px;">尚未落位，无后验数据</span>
+    </div>
+
+    <!-- 二次确认卡（仅「批量执行落位」绑定） -->
+    <div class="confirm-overlay hidden" id="confirmOverlay">
+      <div class="confirm">
+        <div class="ch">二次确认 · 批量执行落位（写【入库台账】）</div>
+        <div class="cl" id="confirmSummary"><span>落位即写【入库台账】，请确认。</span></div>
+        <div class="cbtn">
+          <button class="btn ghost" id="confirmCancel">取消</button>
+          <button class="btn warn" id="confirmOk">确认落位</button>
+        </div>
+      </div>
     </div>
 
     <div class="foot">③ 入库作业 · 按 21/22/24 号文档生成</div>
@@ -186,5 +124,312 @@
 
 <a href="chat.html" class="dock" title="对话式操作台常驻浮窗">💬</a>
 <script src="assets/app.js"></script>
+<script>
+(function () {
+  const WID = 'GTJ10036';   // 单厂试点（CLAUDE.md §一），原型页固定本仓
+
+  const queueEl = document.getElementById('queue');
+  const queueCountEl = document.getElementById('queueCount');
+  const selectedCountEl = document.getElementById('selectedCount');
+  const selectAllEl = document.getElementById('selectAll');
+  const allocateBtn = document.getElementById('allocateBtn');
+  const planStatusEl = document.getElementById('planStatus');
+  const planTableWrapEl = document.getElementById('planTableWrap');
+  const planBodyEl = document.getElementById('planBody');
+  const planStateEl = document.getElementById('planState');
+  const avgCrossEl = document.getElementById('avgCross');
+  const planPillEl = document.getElementById('planPill');
+  const batchConfirmBtn = document.getElementById('batchConfirmBtn');
+  const reasonBoxEl = document.getElementById('reasonBox');
+  const postCountEl = document.getElementById('postCount');
+  const postPillEl = document.getElementById('postPill');
+  const postDetailEl = document.getElementById('postDetail');
+  const confirmOverlayEl = document.getElementById('confirmOverlay');
+  const confirmSummaryEl = document.getElementById('confirmSummary');
+  const confirmOkBtn = document.getElementById('confirmOk');
+  const confirmCancelBtn = document.getElementById('confirmCancel');
+  const searchOrderEl = document.getElementById('searchOrder');
+  const abcFilterEl = document.getElementById('abcFilter');
+  const statusFilterEl = document.getElementById('statusFilter');
+  const resetFilterBtn = document.getElementById('resetFilter');
+
+  if (!queueEl || !window.api || !window.setState) return;
+
+  const STATUS_LABEL = {
+    PENDING: '待推荐', PLANNED: '已规划', CONFIRMED: '已确认', REJECTED: '已驳回',
+    CANCELLED: '已取消', EXECUTED: '已落位', VERIFYING: '后验中', VERIFIED: '已落位',
+    VERIFY_FAILED: '后验未达标', VOID: '已冲正'
+  };
+  const STATUS_PILL = { EXECUTED: 'ok', VERIFIED: 'ok', REJECTED: 'soft', VERIFY_FAILED: 'red', VOID: 'soft' };
+  const FACTOR_LABELS = { abc: 'ABC 等级', cap: '巷道 cap', existing: '既有库位', station: '站台就近', batch: '批次', continuity: '连续性' };
+
+  let orders = [];                 // GET /api/jobs 队列行（含 job_order_id / lock_version）
+  let plans = [];                  // POST /api/allocate/batch 的 plans[]（附 lock_version / rejected）
+  const lockByJob = {};            // job_order_id -> lock_version（队列读到的乐观锁版本）
+  const orderByJob = {};           // job_order_id -> 队列行（后验条 / 驳回取单号时用）
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+  function abcColor(a) { return a === 'A' ? 'var(--amber)' : a === 'B' ? 'var(--blue)' : 'var(--muted)'; }
+  function errText(e) { return (e.body && e.body.message) || e.message || ('HTTP ' + e.status); }
+
+  function buildQuery() {
+    let q = '/jobs?type=INBOUND&warehouse_id=' + WID;
+    if (searchOrderEl.value.trim()) q += '&order_no=' + encodeURIComponent(searchOrderEl.value.trim());
+    if (abcFilterEl.value) q += '&abc_class=' + abcFilterEl.value;
+    if (statusFilterEl.value) q += '&status=' + statusFilterEl.value;
+    return q;
+  }
+
+  async function loadPageData() {
+    setState(queueEl, 'loading', { text: '加载队列中…' });
+    try {
+      orders = await window.api(buildQuery(), { method: 'GET' });
+      Object.keys(lockByJob).forEach(k => delete lockByJob[k]);
+      Object.keys(orderByJob).forEach(k => delete orderByJob[k]);
+      (orders || []).forEach(o => { lockByJob[o.job_order_id] = o.lock_version; orderByJob[o.job_order_id] = o; });
+      renderQueue();
+    } catch (e) {
+      setState(queueEl, 'error', { text: errText(e), retry: '重试', onRetry: loadPageData });
+    }
+  }
+
+  function renderQueue() {
+    if (!orders || !orders.length) {
+      setState(queueEl, 'empty', { text: '请先导入 PO' });
+      queueCountEl.textContent = '0 单';
+      refreshSelectedCount();
+      return;
+    }
+    queueEl.classList.remove('state', 'empty', 'loading', 'success', 'error');
+    queueEl.innerHTML = orders.map(o => {
+      const st = o.status || 'PENDING';
+      const pill = STATUS_PILL[st] || '';
+      return '<div class="ord ck" data-job-order-id="' + esc(o.job_order_id) + '" data-lock-version="' + o.lock_version + '">'
+        + '<label class="ckb"><input type="checkbox"></label>'
+        + '<div class="od">'
+        + '<div class="onum">' + esc(o.order_no) + '</div>'
+        + '<div class="mc">' + esc(o.material_code) + '</div>'
+        + '<div class="t">' + esc(o.material_name || o.material_code) + '</div>'
+        + '<div class="m"><span>' + o.qty + ' 箱</span><span><b style="color:' + abcColor(o.abc_class) + '">' + esc(o.abc_class || '-') + '</b></span></div>'
+        + '<div class="st"><span class="pill ' + pill + '">' + (STATUS_LABEL[st] || st) + '</span></div>'
+        + '</div></div>';
+    }).join('');
+    queueCountEl.textContent = orders.length + ' 单';
+    queueEl.querySelectorAll('.ord input[type=checkbox]').forEach(cb => {
+      cb.addEventListener('change', () => { cb.closest('.ord').classList.toggle('sel', cb.checked); refreshSelectedCount(); });
+    });
+    refreshSelectedCount();
+  }
+
+  function selectedJobIds() {
+    return Array.from(queueEl.querySelectorAll('.ord input[type=checkbox]:checked'))
+      .map(cb => cb.closest('.ord').dataset.jobOrderId);
+  }
+
+  function refreshSelectedCount() {
+    const total = orders ? orders.length : 0;
+    const sel = selectedJobIds().length;
+    selectedCountEl.innerHTML = '已选 <b>' + sel + '</b> / 筛选 <b>' + total + '</b> 单';
+  }
+
+  selectAllEl.addEventListener('change', () => {
+    queueEl.querySelectorAll('.ord input[type=checkbox]').forEach(cb => {
+      cb.checked = selectAllEl.checked;
+      cb.closest('.ord').classList.toggle('sel', cb.checked);
+    });
+    refreshSelectedCount();
+  });
+
+  async function allocate() {
+    const ids = selectedJobIds();
+    if (!ids.length) { setState(planStatusEl, 'error', { text: '请先勾选生产订单' }); return; }
+    setState(planStatusEl, 'loading', { text: '批量分配中…' });
+    planTableWrapEl.classList.add('hidden');
+    try {
+      // 批量分配只生成方案、不写台账，故不弹二次确认卡（design.md D7）。
+      const res = await window.api('/allocate/batch', {
+        method: 'POST', body: { warehouse_id: WID, job_order_ids: ids, snapshot_version: null }
+      });
+      plans = (res.plans || []).map(p => Object.assign({}, p, { lock_version: lockByJob[p.job_order_id], rejected: false }));
+      renderPlans();
+    } catch (e) {
+      setState(planStatusEl, 'error', { text: errText(e), retry: '重试', onRetry: allocate });
+    }
+  }
+
+  function renderPlans() {
+    if (!plans.length) {
+      setState(planStatusEl, 'empty', { text: '本批无可分配的单（或均已被分配/驳回）' });
+      planStateEl.textContent = '未分配';
+      planStateEl.classList.remove('ok', 'red');
+      planPillEl.textContent = '未分配';
+      avgCrossEl.textContent = '—';
+      return;
+    }
+    planStatusEl.classList.remove('state', 'empty', 'loading', 'success', 'error');
+    planStatusEl.textContent = '';
+    planTableWrapEl.classList.remove('hidden');
+    planStateEl.textContent = '已分配 ' + plans.length + ' 单';
+    planStateEl.classList.add('ok');
+    const crosses = plans.map(p => (p.predicted_cross_aisle && p.predicted_cross_aisle.material) || 0);
+    avgCrossEl.textContent = (crosses.reduce((a, b) => a + b, 0) / crosses.length).toFixed(1);
+    const allOk = plans.every(p => !(p.predicted_cross_aisle && p.predicted_cross_aisle.exceeded));
+    planPillEl.textContent = allOk ? '全部达标 ✓' : '有超标';
+    planPillEl.className = 'pill ' + (allOk ? 'ok' : 'red');
+
+    planBodyEl.innerHTML = plans.map((p, i) => {
+      const cross = p.predicted_cross_aisle || {};
+      const aisles = (p.aisles || []).join(', ');
+      const crossText = cross.material != null ? cross.material : '—';
+      return '<tr data-index="' + i + '">'
+        + '<td><b>' + esc(p.order_no) + '</b></td>'
+        + '<td>' + esc(p.material_code) + '</td>'
+        + '<td>' + esc(p.material_name || p.material_code) + '</td>'
+        + '<td>' + esc(p.abc_class || '-') + '</td>'
+        + '<td>' + p.qty + '</td>'
+        + '<td><span class="pill ' + (cross.exceeded ? 'red' : 'ok') + '">{' + esc(aisles) + '}</span></td>'
+        + '<td>' + crossText + '</td>'
+        + '<td class="opcell"><span class="mini" data-act="accept" data-index="' + i + '">接受</span>'
+        + '<span class="mini ghost" data-act="reason" data-index="' + i + '">微调</span>'
+        + '<span class="mini soft" data-act="reject" data-index="' + i + '">驳回</span></td>'
+        + '</tr>';
+    }).join('');
+    planBodyEl.querySelectorAll('[data-act]').forEach(el => el.addEventListener('click', onPlanAction));
+  }
+
+  function onPlanAction(ev) {
+    const plan = plans[parseInt(ev.currentTarget.dataset.index)];
+    if (!plan) return;
+    const act = ev.currentTarget.dataset.act;
+    if (act === 'reason') openReason(plan);
+    else if (act === 'reject') rejectOne(plan, ev.currentTarget);
+    // 'accept' = 沿用系统推荐（默认即接受），无需请求；最终在「批量执行落位」统一确认。
+  }
+
+  async function rejectOne(plan, el) {
+    const reason = prompt('驳回原因（可留空）');
+    if (reason === null) return;   // 取消
+    const row = el.closest('tr');
+    try {
+      await window.api('/job/' + plan.job_order_id + '/reject', { method: 'POST', body: { warehouse_id: WID, reason: reason } });
+      plan.rejected = true;
+      row.style.opacity = '0.5';
+      row.querySelector('.opcell').innerHTML = '<span class="pill soft">已驳回</span>';
+    } catch (e) {
+      alert(errText(e));
+    }
+  }
+
+  async function openReason(plan) {
+    setState(reasonBoxEl, 'loading', { text: '加载 6 因子理由…' });
+    try {
+      // 理由体不随 plans[] 内联（allocate.py D10），「微调」下钻时按 plan_id 另取。
+      const payload = await window.api('/plan/' + plan.plan_id + '?warehouse_id=' + WID, { method: 'GET' });
+      renderReason(payload);
+    } catch (e) {
+      setState(reasonBoxEl, 'error', { text: errText(e), retry: '重试', onRetry: () => openReason(plan) });
+    }
+  }
+
+  function renderReason(p) {
+    reasonBoxEl.classList.remove('state', 'empty', 'loading', 'success', 'error');
+    const primary = (p.aisles || [])[0];
+    const rows = Object.keys(FACTOR_LABELS).map(f => {
+      const label = FACTOR_LABELS[f];
+      const degraded = p.factor_degraded && p.factor_degraded[f];
+      if (degraded) return '<div class="rl dim"><b>' + label + '</b><span>' + esc(degraded) + '</span></div>';
+      const term = p.breakdown && p.breakdown[primary] && p.breakdown[primary][f];
+      return '<div class="rl"><b>' + label + '</b><span>' + esc(term ? term.note : '—') + '</span></div>';
+    }).join('');
+    const scheme = p.degraded
+      ? '<div class="rl dim"><b>方案级</b><span>' + esc(p.degrade_reason || '已降级') + '</span></div>'
+      : '';
+    reasonBoxEl.innerHTML = '<div class="rt">推荐巷道集 {' + esc((p.aisles || []).join(', ')) + '} 的依据</div>' + rows + scheme;
+  }
+
+  batchConfirmBtn.addEventListener('click', () => {
+    const accepted = plans.filter(p => !p.rejected);
+    if (!accepted.length) { setState(planStatusEl, 'error', { text: '没有待落位的方案（均已驳回）' }); return; }
+    confirmSummaryEl.textContent = '将落位 ' + accepted.length + ' 张作业单，落位即写【入库台账】。';
+    confirmOverlayEl.classList.remove('hidden');
+  });
+
+  confirmCancelBtn.addEventListener('click', () => confirmOverlayEl.classList.add('hidden'));
+
+  // 写台账的端点只在二次确认卡「确认落位」后调用（未确认不产生台账）。
+  confirmOkBtn.addEventListener('click', () => {
+    confirmOverlayEl.classList.add('hidden');
+    doBatchConfirm();
+  });
+
+  async function doBatchConfirm() {
+    const accepted = plans.filter(p => !p.rejected);
+    const body = {
+      warehouse_id: WID,
+      orders: accepted.map(p => ({
+        job_order_id: p.job_order_id,
+        // 原型占位：库位号 = 推荐巷道 + 固定格位后缀（6 位）。生产落位由引擎在推荐
+        // 巷道内选定具体格位（本页不实现「巷道→格位」解析，见 design.md D5）。
+        target_location_code: ((p.aisles && p.aisles[0]) || '01') + '0104',
+        lock_version: p.lock_version
+      }))
+    };
+    setState(planStatusEl, 'loading', { text: '落位中…' });
+    try {
+      const res = await window.api('/job/batch/confirm', { method: 'POST', body: body });
+      const outcomes = res.results || [];
+      const done = outcomes.filter(r => r.status === 'VERIFIED' || r.status === 'VERIFY_FAILED').length;
+      const failed = outcomes.length - done;
+      setState(planStatusEl, 'success', { text: '落位完成：成功 ' + done + ' 单 / 失败 ' + failed + ' 单' });
+      renderPostbar(outcomes);
+      loadPageData();   // 落位后重拉队列（状态已推进）
+    } catch (e) {
+      setState(planStatusEl, 'error', { text: errText(e), retry: '重试', onRetry: doBatchConfirm });
+    }
+  }
+
+  function renderPostbar(outcomes) {
+    postCountEl.textContent = outcomes.length;
+    const firstDone = outcomes.find(r => r.status === 'VERIFIED' || r.status === 'VERIFY_FAILED');
+    if (!firstDone) {
+      postPillEl.textContent = '未落位';
+      postPillEl.className = 'pill soft';
+      postDetailEl.textContent = '本次未成功落位任何作业单';
+      return;
+    }
+    loadVerification(firstDone.job_order_id);
+  }
+
+  async function loadVerification(jobId) {
+    try {
+      const rows = await window.api('/verification/' + jobId + '?warehouse_id=' + WID, { method: 'GET' });
+      const allOk = (rows || []).every(r => r.verify_result === 'PASS');
+      postPillEl.textContent = allOk ? '达标 ✓' : '偏离';
+      postPillEl.className = 'pill ' + (allOk ? 'ok' : 'red');
+      const parts = (rows || []).map(r =>
+        r.metric_kind + ' ' + r.actual_value + '/' + r.threshold_value + (r.verify_result === 'PASS' ? '（达标）' : '（偏离）')
+      );
+      postDetailEl.textContent = '后验口径：' + parts.join(' · ');
+    } catch (e) {
+      postDetailEl.textContent = '后验明细获取失败：' + errText(e);
+    }
+  }
+
+  searchOrderEl.addEventListener('change', loadPageData);
+  abcFilterEl.addEventListener('change', loadPageData);
+  statusFilterEl.addEventListener('change', loadPageData);
+  resetFilterBtn.addEventListener('click', () => {
+    searchOrderEl.value = '';
+    abcFilterEl.value = '';
+    statusFilterEl.value = '';
+    loadPageData();
+  });
+
+  allocateBtn.addEventListener('click', allocate);
+  loadPageData();
+})();
+</script>
 </body>
 </html>

@@ -13,6 +13,8 @@
 | POST | `/api/job/{id}/reject` | 驳回（`PLANNED → REJECTED`） | 状态机 |
 | POST | `/api/job/{id}/retry` | 后验重试（`VERIFY_FAILED → VERIFYING → …`） | `run_verification` |
 | POST | `/api/job/{id}/void` | 冲正（`EXECUTED/VERIFIED → VOID`） | `void_job` |
+| GET  | `/api/jobs` | 按类型查作业队列（入库 p3 多选队列入口） | — |
+| GET  | `/api/plan/{plan_id}` | 按方案取推荐理由体（`payload_json`） | — |
 | GET  | `/api/ledger` | 按作业单查台账（含反向行） | — |
 | GET  | `/api/verification/{job_id}` | 查某单的后验结果 | — |
 | GET  | `/api/deviation` | 查本仓偏离批次清单（移库任务来源） | `kpi.list_deviations` |
@@ -50,11 +52,11 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.api.deps import current_account, get_db
-from app.core.enums import JobStatus, JobType
+from app.core.enums import AbcClass, JobStatus, JobType
 from app.core.errors import StateConflict, ValidationBlocked
 from app.core.state_machine import assert_transition
 from app.models.identity import Account
-from app.models.job import DeviationStatus, JobOrder, Ledger, Verification
+from app.models.job import DeviationStatus, JobOrder, Ledger, RecommendationPlan, Verification
 from app.models.linkage import Snapshot
 from app.schemas.job import (
     BatchConfirmRequest,
@@ -62,6 +64,7 @@ from app.schemas.job import (
     ConfirmItem,
     ConfirmOutcome,
     DeviationItem,
+    JobQueueItem,
     JobStatusResponse,
     LedgerItem,
     RejectRequest,
@@ -415,3 +418,73 @@ def list_deviation(
     """
     rows = kpi.list_deviations(session, warehouse_id=warehouse_id, status=status)
     return [DeviationItem.model_validate(row) for row in rows]
+
+
+@reads_router.get("/jobs", response_model=list[JobQueueItem])
+def list_jobs(
+    warehouse_id: str = Query(min_length=1, max_length=32),
+    type: JobType = Query(...),
+    status: JobStatus | None = Query(default=None),
+    material_code: str | None = Query(default=None),
+    abc_class: AbcClass | None = Query(default=None),
+    order_no: str | None = Query(default=None),
+    session: Session = Depends(get_db),
+) -> list[JobQueueItem]:
+    """按类型查作业队列（openspec/changes/inbound-domain/design.md D1 / D3 / D4）。
+
+    - `type` 必填且用 `JobType` 枚举 —— 非法取值在参数校验层即 422，避免「拼错类型
+      返回空队列」被误读成「无数据」。端点类型无关（`WHERE job_type = :type` 一个通式），
+      `outbound` / `relocate` 由 28-03 / 28-04 复用同一端点。
+    - 可选 `status` / `material_code` / `abc_class` 为**精确**筛选，`order_no` 为**前缀**
+      匹配（design.md D3：前端搜索框映射到 `order_no`）。
+    - 纯 `SELECT`：不取业务钟、不 `commit`、不改 `lock_version`、不迁移状态
+      （spec「查询不改变状态」）。跨仓隔离靠 `warehouse_id` 进查询（`CLAUDE.md` §七）。
+    """
+    stmt = sa.select(JobOrder).where(
+        JobOrder.warehouse_id == warehouse_id,
+        JobOrder.job_type == type,
+    )
+    if status is not None:
+        stmt = stmt.where(JobOrder.status == status)
+    if material_code is not None:
+        stmt = stmt.where(JobOrder.material_code == material_code)
+    if abc_class is not None:
+        stmt = stmt.where(JobOrder.abc_class == abc_class)
+    if order_no is not None:
+        stmt = stmt.where(JobOrder.order_no.startswith(order_no))
+    rows = session.scalars(stmt.order_by(JobOrder.id))
+    return [JobQueueItem.model_validate(row) for row in rows]
+
+
+@reads_router.get("/plan/{plan_id}", response_model=dict)
+def read_plan_reason(
+    plan_id: str,
+    warehouse_id: str = Query(min_length=1, max_length=32),
+    session: Session = Depends(get_db),
+) -> dict:
+    """按 `plan_id` 取推荐理由体（openspec/changes/inbound-domain/design.md D8）。
+
+    - `plan_id` = `RecommendationPlan.id` 的 `str` 形态，走 `_ID_PATTERN` 校验。
+    - `WHERE id == :pid AND warehouse_id == :wid`：**跨仓就是未知** —— 别的仓的方案在本
+      接口里不返回、不泄露存在性（对齐 `_load_order` 的 `ValidationBlocked` 422）。
+    - 透传 `payload_json`，不复制副本、不重新校验形状：理由体只有一个来源（库里的方案行，
+      `allocate.py` D10「理由不随 `plans[]` 返回、按 `plan_id` 另取」），`response_model=dict`
+      让三类方案（分配 / 顺路取 / 收拢，`17` §10.1~10.3）共用同一端点而不绑死某一种形状。
+    """
+    if not _ID_PATTERN.match(plan_id):
+        raise ValidationBlocked(
+            f"方案标识 {plan_id!r} 的形状不合法 —— 本接口用 str(RecommendationPlan.id)",
+            detail={"plan_id": plan_id},
+        )
+    row = session.scalars(
+        sa.select(RecommendationPlan).where(
+            RecommendationPlan.id == int(plan_id),
+            RecommendationPlan.warehouse_id == warehouse_id,
+        )
+    ).first()
+    if row is None:
+        raise ValidationBlocked(
+            f"方案不存在或不属于本仓（{warehouse_id}）：{plan_id}",
+            detail={"missing_plan_ids": [int(plan_id)]},
+        )
+    return row.payload_json
