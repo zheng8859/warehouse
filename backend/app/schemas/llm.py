@@ -15,16 +15,37 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_serializer
+
+#: AI 标注（spec `ai-assist`「AI 建议标注」）—— 所有 LLM 叙事的强制前缀，让前端只能把
+#: `ai` 渲染成琥珀色「AI 建议」，而非系统结论（红线：AI 输出不得渲染成系统结论）。
+#: 只挂 `ai`，不挂 `rule`（`rule` 是规则算的确定数据，是合法的系统结论）。
+AI_NOTICE = "AI 建议，仅供参考，需人工核实，不自动执行"
+
+
+def with_ai_notice(ai: str | None) -> str | None:
+    """给 LLM 叙事注入 AI 标注。`None`（降级无叙事）不注入 —— 没有叙事就没有标注。"""
+    if ai is None:
+        return None
+    return f"{AI_NOTICE}\n{ai}"
 
 
 class DualProductResponse(BaseModel):
-    """双产物（D4）：`rule` 恒有 + `ai` 可选 + `ai_generated` + `degraded_reason`。"""
+    """双产物（D4）：`rule` 恒有 + `ai` 可选 + `ai_generated` + `degraded_reason`。
+
+    `ai` 在序列化时**强制注入** AI Notice（`field_serializer`）—— 无论哪个端点返回本
+    DTO，LLM 叙事都带着「AI 建议，仅供参考，需人工核实，不自动执行」标注，前端据此
+    判「无标注不渲染为系统结论」。`rule` 不加标注（它是规则算的系统结论）。
+    """
 
     rule: dict[str, Any]
     ai: str | None = None
     ai_generated: bool
     degraded_reason: str | None = None
+
+    @field_serializer("ai")
+    def _inject_ai_notice(self, ai: str | None) -> str | None:
+        return with_ai_notice(ai)
 
 
 class ToggleRequest(BaseModel):

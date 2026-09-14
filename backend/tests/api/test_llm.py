@@ -19,6 +19,8 @@ from app.core.config import settings
 from app.core.enums import AccountStatus, Role
 from app.core.security import create_session_token
 from app.models.identity import Account
+from app.schemas.conversation import ConversationMessageResponse
+from app.schemas.llm import AI_NOTICE, DualProductResponse
 from tests.logic.conftest import AisleSpec, InventorySpec, MaterialSpec
 
 pytestmark = pytest.mark.api
@@ -162,3 +164,40 @@ def test_weight_apply_endpoint_wired(job_api, monkeypatch) -> None:
     )
     assert response.status_code == 404
     assert response.json()["error"] == "not_found"
+
+
+# ------------------------------------------------------------------ AI Notice（tasks.md 5.2）
+
+def test_ai_notice_is_forced_on_dual_product_serialization() -> None:
+    """AI Notice 强制注入（spec「AI 建议标注」）：非空 `ai` 序列化必带标注前缀。"""
+    response = DualProductResponse(
+        rule={"metrics": {}},
+        ai="集中度 80% 落在 3 巷",
+        ai_generated=True,
+        degraded_reason=None,
+    )
+    assert response.model_dump()["ai"] == f"{AI_NOTICE}\n集中度 80% 落在 3 巷"
+
+
+def test_ai_notice_is_forced_on_conversation_serialization() -> None:
+    """对话台响应的 `ai` 走同一契约：非空叙事同样强制注入标注。"""
+    response = ConversationMessageResponse(
+        intent="KPI_INTERPRET",
+        write_intent=False,
+        rule={"metrics": {}},
+        ai="本周集中度向好",
+        ai_generated=True,
+        degraded_reason=None,
+    )
+    assert response.model_dump()["ai"] == f"{AI_NOTICE}\n本周集中度向好"
+
+
+def test_ai_notice_skips_none() -> None:
+    """降级无叙事（`ai=None`）→ 不注入标注（没有叙事就没有标注，前端无标注不渲染）。"""
+    response = DualProductResponse(
+        rule={"metrics": {}},
+        ai=None,
+        ai_generated=False,
+        degraded_reason="provider_unconfigured",
+    )
+    assert response.model_dump()["ai"] is None

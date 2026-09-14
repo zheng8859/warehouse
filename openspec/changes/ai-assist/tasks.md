@@ -34,7 +34,7 @@
 ## 5. API 端点与鉴权
 
 - [x] 5.1 `routes/llm.py` 七个端点（toggle / kpi/interpret / deviation/attribute / weight/tune / weight/apply / relocate/propose）。验证：API 冒烟 + 双产物响应契约单测（`rule` 恒有、`ai` 可选、`ai_generated`、`degraded_reason`）。
-- [ ] 5.2 `schemas/` DTO + AI Notice 强制注入（所有 `ai` 文本附「AI 建议，仅供参考，需人工核实，不自动执行」）。验证：契约单测——无标注不渲染。
+- [x] 5.2 `schemas/` DTO + AI Notice 强制注入（所有 `ai` 文本附「AI 建议，仅供参考，需人工核实，不自动执行」）。验证：契约单测——无标注不渲染。
 - [ ] 5.3 `deps.py` / 端点接入 `require_permission`（`ai.assist` / `ai.weight.update` / `ai.relocate.propose` / `ai.toggle`）。验证：403 单测——计划员调 `ai.assist` 403、非管理员调 toggle 403。
 
 ## 6. 异常/边界与回归

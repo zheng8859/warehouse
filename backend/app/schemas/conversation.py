@@ -11,7 +11,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
+
+from app.schemas.llm import with_ai_notice
 
 
 class ConversationMessageRequest(BaseModel):
@@ -49,3 +51,8 @@ class ConversationMessageResponse(BaseModel):
     ai: str | None = None
     ai_generated: bool
     degraded_reason: str | None = None
+
+    @field_serializer("ai")
+    def _inject_ai_notice(self, ai: str | None) -> str | None:
+        """同 `DualProductResponse`：`ai` 序列化时强制注入 AI Notice（spec「AI 建议标注」）。"""
+        return with_ai_notice(ai)
