@@ -6,9 +6,9 @@
 
 ## 1. 配置与数据模型地基
 
-- [ ] 1.1 `core/config.py` 新增 4 配置项（`llm_provider=""` / `llm_max_tokens_per_req=4096` / `llm_max_concurrency=4` / `llm_monthly_budget=1_000_000`）。验证：`tests/models/`（或新增 `tests/core/test_config.py`）断言默认值与环境变量覆盖（env_prefix `WMS_`）。
-- [ ] 1.2 新增 3 实体 `AiSuggestion` / `ConversationLog` / `AiCostQuota`（`models/` 按 17 号数据链分组挂载，均 `warehouse_id` 隔离、非台账）+ Alembic 迁移（additive-only）。验证：`tests/models/` CRUD + 唯一约束 + 无 `is_deleted` 断言通过，`alembic upgrade head` 空库可跑。
-- [ ] 1.3 `api/permissions.py` `Permission` 增 `ai.assist` / `ai.weight.update` / `ai.relocate.propose` / `ai.toggle`（17→21），`ROLE_PERMISSIONS` 映射（前三者 → 仓管员/主管/管理员；`ai.toggle` → 仅管理员）。验证：权限矩阵单测（对照 `13` §2.2，计划员对 `ai.*` 全无）。
+- [x] 1.1 `core/config.py` 新增 4 配置项（`llm_provider=""` / `llm_max_tokens_per_req=4096` / `llm_max_concurrency=4` / `llm_monthly_budget=1_000_000`）。验证：`tests/models/`（或新增 `tests/core/test_config.py`）断言默认值与环境变量覆盖（env_prefix `WMS_`）。
+- [x] 1.2 新增 3 实体 `AiSuggestion` / `ConversationLog` / `AiCostQuota`（`models/` 按 17 号数据链分组挂载，均 `warehouse_id` 隔离、非台账）+ Alembic 迁移（additive-only）。验证：`tests/models/` CRUD + 唯一约束 + 无 `is_deleted` 断言通过，`alembic upgrade head` 空库可跑。
+- [x] 1.3 `api/permissions.py` `Permission` 增 `ai.assist` / `ai.weight.update` / `ai.relocate.propose` / `ai.toggle`（17→21），`ROLE_PERMISSIONS` 映射（前三者 → 仓管员/主管/管理员；`ai.toggle` → 仅管理员）。验证：权限矩阵单测（对照 `13` §2.2，计划员对 `ai.*` 全无）。
 
 ## 2. 统一 LLM 网关（脱敏 / 护栏 / 记账）
 

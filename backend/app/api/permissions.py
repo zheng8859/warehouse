@@ -43,7 +43,7 @@ from app.core.enums import Role
 
 
 class Permission(str, Enum):
-    """资源.操作 标识。13 §2.1 —— 共 17 个。"""
+    """资源.操作 标识。13 §2.1 + 29 号冷路径 —— 共 21 个。"""
 
     ACCOUNT_MANAGE = "account.manage"
 
@@ -71,6 +71,11 @@ class Permission(str, Enum):
     LEDGER_WRITE = "ledger.write"
 
     ENGINE_INVOKE = "engine.invoke"
+
+    AI_ASSIST = "ai.assist"
+    AI_WEIGHT_UPDATE = "ai.weight.update"
+    AI_RELOCATE_PROPOSE = "ai.relocate.propose"
+    AI_TOGGLE = "ai.toggle"
 
 
 #: 恒不授予任何角色的权限 —— 只能由系统内部（作业流 / 引擎）触发。
@@ -123,6 +128,10 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
             Permission.CONVERSATION_VIEW,
             Permission.CONVERSATION_OPERATE,
             Permission.LEDGER_VIEW,
+            # 冷路径只读建议 + ③ 采纳 + ④ 方案生成（D6：计划员无 ai.*）。
+            Permission.AI_ASSIST,
+            Permission.AI_WEIGHT_UPDATE,
+            Permission.AI_RELOCATE_PROPOSE,
         }
     ),
     Role.PLANNER: frozenset(
@@ -146,6 +155,10 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
             Permission.CONVERSATION_VIEW,
             Permission.CONVERSATION_OPERATE,
             Permission.LEDGER_VIEW,
+            # 冷路径只读建议 + ③ 采纳 + ④ 方案生成（D6：计划员无 ai.*）。
+            Permission.AI_ASSIST,
+            Permission.AI_WEIGHT_UPDATE,
+            Permission.AI_RELOCATE_PROPOSE,
         }
     ),
     Role.ADMIN: frozenset({p for p in Permission if p not in AUTO_ONLY}),

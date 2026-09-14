@@ -9,7 +9,7 @@
 ## 这里测的是**数据**，不是行为
 
 D9：端点级资源鉴权不在本阶段。所以本文件的断言对象是那张矩阵本身 ——
-「4 角色 × 17 权限 = 68 格，每格与 13 §2.2 逐条一致」。它值钱的地方恰恰在于
+「4 角色 × 21 权限 = 84 格，每格与 13 §2.2 逐条一致」。它值钱的地方恰恰在于
 **没有端点消费它**：矩阵是目标模型（13 §二 开头逐字），阶段七前端按它渲染菜单
 （13 §3.1）、RBAC 落地后由后端强制（M5）。矩阵错了，错的是一整条链上的所有下游，
 而在没有端点的时候，只有这条测试能发现。
@@ -71,12 +71,17 @@ MATRIX: tuple[tuple[Permission, bool, bool, bool, bool], ...] = (
     # 在 `check` 这一维上四个角色全 False（`AUTO_ONLY` 恒 False），见 §8.3。
     (Permission.LEDGER_WRITE,         _F, _F, _F, _F),  # 自动
     (Permission.ENGINE_INVOKE,        _F, _F, _F, _F),  # 自动
+    # 冷路径 `ai.*`（D6）：前三者仓管员/主管/管理员，计划员无；toggle 仅管理员。
+    (Permission.AI_ASSIST,            _T, _F, _T, _T),  # ✅ ❌ ✅ ✅
+    (Permission.AI_WEIGHT_UPDATE,     _T, _F, _T, _T),  # ✅ ❌ ✅ ✅
+    (Permission.AI_RELOCATE_PROPOSE,  _T, _F, _T, _T),  # ✅ ❌ ✅ ✅
+    (Permission.AI_TOGGLE,            _F, _F, _F, _T),  # ❌ ❌ ❌ ✅
 )
 
-#: 8.1 的「10 资源」—— 17 个标识背后的资源数，取自 13 §2.1 的表。
+#: 8.1 的「11 资源」—— 21 个标识背后的资源数，取自 13 §2.1 的表 + 冷路径 `ai`（29）。
 RESOURCES: frozenset[str] = frozenset(
     {"account", "data_import", "inbound", "outbound", "relocate", "kpi",
-     "config", "conversation", "ledger", "engine"}
+     "config", "conversation", "ledger", "engine", "ai"}
 )
 
 
@@ -84,17 +89,18 @@ RESOURCES: frozenset[str] = frozenset(
 
 
 def test_matrix_covers_every_identifier_exactly_once() -> None:
-    """17 行 —— 与 `Permission` 的成员数、13 §2.1 的表逐条对上。
+    """21 行 —— 与 `Permission` 的成员数、13 §2.1 的表 + 冷路径 `ai.*` 逐条对上。
 
     只有「行数相等」挡不住「一个重复、另一个漏掉」，故断言两侧的**集合**相等。
     """
-    assert len(Permission) == 17, "13 §2.1 定义 17 个 resource.action 标识"
-    assert [row[0] for row in MATRIX].__len__() == 17
+    assert len(Permission) == 21, "13 §2.1 + 29 号定义 21 个 resource.action 标识"
+    assert [row[0] for row in MATRIX].__len__() == 21
     assert {row[0] for row in MATRIX} == set(Permission)
 
 
-def test_identifiers_cover_the_ten_resources() -> None:
-    """资源的**前缀**恰好是 13 §2.1 的 10 个 —— `kpi`/`engine`/`account` 只有一个动作。
+def test_identifiers_cover_the_eleven_resources() -> None:
+    """资源的**前缀**恰好是 13 §2.1 的 10 个 + 冷路径 `ai` —— `kpi`/`engine`/`account`
+    只有一个动作。
 
     这条与上一条互补：上一条防「标识本身抄漏」，这条防「标识写错成别的资源」
     （例如把 `outbound.view` 写成 `outbound.view_`、或凭空多一个 `report.view`）。
@@ -112,7 +118,7 @@ def test_identifiers_cover_the_ten_resources() -> None:
 def test_every_role_permission_pair_matches_doc_13_section_2_2(
     permission: Permission, role: Role, expected: bool
 ) -> None:
-    """8.1 的验证动作：68 格逐格与 13 §2.2 一致（`26` 完成标准 #3）。"""
+    """8.1 的验证动作：84 格逐格与 13 §2.2 一致（`26` 完成标准 #3）。"""
     assert check(role, permission) is expected
 
 
@@ -138,7 +144,7 @@ def test_matrix_has_no_role_without_an_entry() -> None:
 
 
 def test_check_is_deterministic() -> None:
-    """同样输入必得同样输出（红线之一）—— 全 68 格比两遍。"""
+    """同样输入必得同样输出（红线之一）—— 全 84 格比两遍。"""
     for role, permission in itertools.product(Role, Permission):
         assert check(role, permission) == check(role, permission)
 
@@ -238,6 +244,36 @@ def test_admin_is_a_superset_of_everyone_except_auto_only() -> None:
     """
     for role in (Role.WAREHOUSE_KEEPER, Role.PLANNER, Role.SUPERVISOR):
         assert ROLE_PERMISSIONS[role] <= ROLE_PERMISSIONS[Role.ADMIN], role.value
+
+
+# ------------------------------------------------------------------ 8.2b 冷路径 ai.* 权限（D6）
+
+def test_planner_has_no_ai_permissions() -> None:
+    """spec `permission` 场景「计划员无 ai 建议权限」：计划员对四个 `ai.*` 全无。
+
+    计划员是协调者（13 §2.3 的只读业务岗），冷路径建议是给执行/决策岗的辅助，
+    不向它开放（D6）。
+    """
+    for permission in (
+        Permission.AI_ASSIST,
+        Permission.AI_WEIGHT_UPDATE,
+        Permission.AI_RELOCATE_PROPOSE,
+        Permission.AI_TOGGLE,
+    ):
+        assert check(Role.PLANNER, permission) is False, permission.value
+
+
+def test_ai_toggle_is_admin_only() -> None:
+    """spec `permission` 场景「ai.toggle 仅管理员」：非管理员 403 那一格的判据来源。"""
+    holders = [role for role in Role if check(role, Permission.AI_TOGGLE)]
+    assert holders == [Role.ADMIN]
+
+
+def test_ai_assist_grants_read_suggestions_to_three_roles() -> None:
+    """`ai.assist` 授予仓管员/主管/管理员，计划员无（D6）。"""
+    for role in (Role.WAREHOUSE_KEEPER, Role.SUPERVISOR, Role.ADMIN):
+        assert check(role, Permission.AI_ASSIST) is True, role.value
+    assert check(Role.PLANNER, Permission.AI_ASSIST) is False
 
 
 # ------------------------------------------------------------------ 8.3 AUTO_ONLY 封闭性
