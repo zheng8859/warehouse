@@ -38,4 +38,4 @@
 > **统一**清扫（`/api/v1` → `/api` + 已落地端点对齐代码真实路径），改前逐份建 `.<时间戳>.bak`。
 > 本变更不阻塞于此项。
 
-- [ ] 4.1 （**延后**至 `outbound-domain` / `relocate-domain` 落地后统一处理）仓库外设计文档残留 `/api/v1` 清扫登记：`15-03` / `15-04` / `15-05` / `16` / `17` / `18` / `19` / `13` / `28-03` / `28-04` / `28-05` 中尚未改的 `/api/v1/jobs...` → `/api/jobs?type=...`、`/api/v1/jobs/batch/allocate` → `/api/allocate/batch`；改前一律建 `.<时间戳>.bak`（设计文档改动惯例）。验证：`grep -rn "/api/v1" "D:/成品库位智能推荐/产品设计/"` 只剩本变更明确保留的出库/移库 TBD 路径（`15-03` / `15-04` 的 `/api/v1/jobs?type=outbound|relocate` 属 28-03 / 28-04，未落地前保留原文）。
+- [x] 4.1 （**延后**至 `outbound-domain` / `relocate-domain` 落地后统一处理）仓库外设计文档残留 `/api/v1` 清扫登记：`15-03` / `15-04` / `15-05` / `16` / `17` / `18` / `19` / `13` / `28-03` / `28-04` / `28-05` 中尚未改的 `/api/v1/jobs...` → `/api/jobs?type=...`、`/api/v1/jobs/batch/allocate` → `/api/allocate/batch`；改前一律建 `.<时间戳>.bak`（设计文档改动惯例）。验证：`grep -rn "/api/v1" "D:/成品库位智能推荐/产品设计/"` 只剩本变更明确保留的出库/移库 TBD 路径（`15-03` / `15-04` 的 `/api/v1/jobs?type=outbound|relocate` 属 28-03 / 28-04，未落地前保留原文）。
