@@ -83,7 +83,6 @@ main{flex:1;min-width:0;padding:22px 26px;min-height:600px;
 .sec-head{display:flex;align-items:baseline;gap:12px;margin-bottom:4px;flex-wrap:wrap;}
 .sec-head h2{font-size:20px;margin:0;font-weight:600;}
 .sec-tag{font-size:11px;color:#fff;background:var(--blue);padding:2px 9px;border-radius:20px;}
-.sec-sub{color:var(--muted);margin:4px 0 18px;font-size:12.5px;line-height:1.65;}
 
 /* ============ 通用组件（21 号 §7） ============ */
 .card{
@@ -135,13 +134,6 @@ th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-ali
 th{background:#f0f5fb;font-weight:600;color:var(--muted);font-size:11.5px;}
 td code{background:#f0f5fb;padding:1px 6px;border-radius:4px;font-size:11.5px;color:#3a4a5e;}
 
-/* 提示条（琥珀左边框） */
-.note{
-  font-size:11.5px;color:var(--muted);
-  background:var(--amber-soft);border-left:3px solid var(--amber);
-  padding:8px 12px;border-radius:0 6px 6px 0;margin-top:8px;line-height:1.6;
-}
-
 .hidden{display:none;}
 
 /* ============ 四态占位（21 号 §7.11） ============ */
@@ -169,7 +161,6 @@ td code{background:#f0f5fb;padding:1px 6px;border-radius:4px;font-size:11.5px;co
   font-size:11px;padding:2px 10px;border-radius:20px;margin-right:8px;vertical-align:middle;
 }
 .op-banner b{color:var(--blue);}
-.op-banner .sub{color:var(--muted);font-size:11.5px;margin-top:5px;}
 
 /* 流程状态卡（21 号 §7.2 / §7.8） */
 .flow{display:flex;align-items:center;flex-wrap:wrap;margin:8px 0;}
@@ -203,7 +194,6 @@ td code{background:#f0f5fb;padding:1px 6px;border-radius:4px;font-size:11.5px;co
 .login-card .pwd-toggle{position:absolute;right:10px;top:50%;transform:translateY(-50%);
   cursor:pointer;color:var(--muted);font-size:14px;user-select:none;}
 .login-card .btn{width:100%;margin-top:4px;}
-.login-card .sec-foot{font-size:11px;color:var(--muted);text-align:center;margin-top:14px;line-height:1.6;}
 
 /* ============ 数据导入页 ============ */
 .upzone{display:flex;gap:14px;flex-wrap:wrap;}
@@ -213,9 +203,11 @@ td code{background:#f0f5fb;padding:1px 6px;border-radius:4px;font-size:11.5px;co
   margin:0 auto 9px;display:flex;align-items:center;justify-content:center;
   font-size:13px;font-weight:700;letter-spacing:.5px;}
 .uz .nm{font-weight:600;font-size:13px;}
-.uz .st{font-size:11.5px;color:var(--muted);margin-top:5px;line-height:1.55;}
+.uz input[type="file"]{font-size:0;margin-top:8px;}
+.uz input[type="file"]::file-selector-button{
+  font-size:12.5px;color:var(--ink);padding:6px 12px;
+  border:1px solid var(--blue);background:var(--blue-soft);border-radius:7px;cursor:pointer;}
 .uz.ok{border-color:var(--green);border-style:solid;background:#f4fbf6;}
-.uz.ok .st{color:var(--green);}
 .uz.bi .ic{background:var(--amber-soft);color:var(--amber);}
 
 /* ============ 作业页布局 ============ */
@@ -302,8 +294,6 @@ td code{background:#f0f5fb;padding:1px 6px;border-radius:4px;font-size:11.5px;co
 .route .seg{border:1px solid var(--line);border-radius:7px;padding:6px 10px;background:#fff;}
 .route .arrow{color:var(--muted);}
 .route .seg.hot{border-color:var(--red);color:var(--red);background:#fbecec;}
-.purpose{font-size:11.5px;line-height:1.65;color:var(--ink);background:#f0f5fb;
-  border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:8px 0;}
 
 /* ============ 对话式操作台 ============ */
 .chat{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#fff;}
@@ -313,11 +303,13 @@ td code{background:#f0f5fb;padding:1px 6px;border-radius:4px;font-size:11.5px;co
   border-radius:20px;background:#fff;color:var(--blue);cursor:pointer;transition:background .15s;
   text-decoration:none;display:inline-block;}
 .chat .bar .qs:hover{background:var(--blue-soft);}
-.chat .bar .qlabel{font-size:11px;color:var(--muted);margin-right:4px;}
 .chat .bar.bar2{background:#f1eef7;}
 .chat .bar .qs.l2{border-color:#5b4b96;color:#5b4b96;}
 .chat .bar .qs.l2:hover{background:#ece8f4;}
 .chat .body{padding:16px;min-height:340px;display:flex;flex-direction:column;gap:14px;}
+.chat .inputbar{display:flex;gap:8px;padding:10px 12px;border-top:1px solid var(--line);background:#fff;}
+.chat .inputbar input{flex:1;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px;color:var(--ink);}
+.chat .inputbar input:focus{outline:none;border-color:var(--blue);}
 .bub{max-width:78%;padding:10px 14px;border-radius:14px;font-size:13px;line-height:1.55;}
 .bub.u{align-self:flex-end;background:var(--blue);color:#fff;border-bottom-right-radius:3px;filter:saturate(.9);}
 .rescard{border:1px solid var(--line);border-radius:9px;padding:12px 14px;background:#fff;
@@ -331,6 +323,25 @@ td code{background:#f0f5fb;padding:1px 6px;border-radius:4px;font-size:11.5px;co
 .confirm .cl b{flex:0 0 80px;color:var(--ink);font-weight:600;}
 .confirm .cl span{flex:1;}
 .confirm .cbtn{display:flex;gap:10px;margin-top:11px;justify-content:flex-end;}
+
+/* ============ 冷路径 AI 辅助（10 号 · 琥珀「AI 建议」+ 二次确认卡） ============ */
+.ai-rule{border:1px solid var(--line);border-radius:9px;padding:12px 14px;background:#fff;
+  max-width:86%;align-self:flex-start;box-shadow:var(--shadow-sm);}
+.ai-rule .rh{font-weight:700;font-size:12.5px;margin-bottom:6px;}
+.ai-rule .rb{font-size:11.5px;color:var(--muted);line-height:1.6;}
+.ai-rule .rb pre{margin:0;white-space:pre-wrap;word-break:break-word;font-family:ui-monospace,Menlo,Consolas,monospace;}
+.ai-card{border:1px solid var(--amber);background:var(--amber-soft);border-radius:9px;
+  padding:12px 14px;max-width:86%;align-self:flex-start;box-shadow:var(--shadow-sm);}
+.ai-card .rh{font-weight:700;color:var(--amber);font-size:12.5px;margin-bottom:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+.ai-card .rb{font-size:12px;color:var(--ink);line-height:1.6;}
+.ai-card.degraded{border-style:dashed;}
+.confirm-card{border:2px solid var(--amber);background:var(--amber-soft);border-radius:9px;
+  padding:13px 15px;max-width:86%;align-self:flex-start;}
+.confirm-card .ch{font-weight:700;color:var(--amber);font-size:13px;margin-bottom:9px;}
+.confirm-card .cl{font-size:12px;margin:4px 0;display:flex;gap:8px;line-height:1.55;}
+.confirm-card .cl b{flex:0 0 80px;color:var(--ink);font-weight:600;}
+.confirm-card .cl span{flex:1;}
+.confirm-card .cbtn{display:flex;gap:10px;margin-top:11px;justify-content:flex-end;}
 
 /* 浮窗（21 号 §7.9） */
 .dock{position:fixed;right:26px;bottom:26px;width:54px;height:54px;border-radius:50%;

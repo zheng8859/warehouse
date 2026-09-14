@@ -34,7 +34,6 @@
 
   <main>
     <div class="sec-head"><h2>⑧ 对话式操作台</h2><span class="sec-tag">全部角色 · 常驻入口</span></div>
-    <p class="sec-sub">① 顶部快捷指令条（L0 点击直达对应作业页）：入库 / 出库 / 移库 / KPI / 今日推荐库位；② 常用问句 chip（L2 走外部 LLM，脱敏后分析，产出建议供参考）；③ 中部对话区；写操作弹确认卡。读操作直出卡片，写操作须二次确认（L1）。亦为各页面右下角常驻浮窗。</p>
 
     <div class="chat">
       <div class="bar">
@@ -45,54 +44,17 @@
         <a class="qs" href="inbound.html">今日推荐库位</a>
       </div>
       <div class="bar bar2">
-        <span class="qlabel">L2 复杂问句（走外部 LLM · 脱敏后）：</span>
-        <span class="qs l2" title="冷路径① KPI 解读：外部 LLM 分析，产出建议（需人工核实）">帮我分析本周集中度下滑的原因</span>
-        <span class="qs l2" title="冷路径② 偏离归因：外部 LLM 多源归因（需人工核实）">为什么 PET600 跨了 11 个巷道？</span>
-        <span class="qs l2" title="冷路径③ 权重调优：外部 LLM 给建议，人采纳才生效">权重怎么调能提升集中度？</span>
-        <span class="qs l2" title="冷路径④ 移库方案：外部 LLM 生成多方案，规则校验+人工确认后才执行">帮我生成茉莉柚茶的收拢方案，代价多大？</span>
+        <span class="qs l2">帮我分析本周集中度下滑的原因</span>
+        <span class="qs l2">为什么 PET600 跨了 11 个巷道？</span>
+        <span class="qs l2">权重怎么调能提升集中度？</span>
+        <span class="qs l2">帮我生成茉莉柚茶的收拢方案，代价多大？</span>
       </div>
-      <div class="body">
-        <div class="bub u">今天这批货放哪</div>
-        <div class="rescard">
-          <div class="rh">📋 入库作业 · 队列视图 <span class="pill">5 单待分配</span></div>
-          <div class="rb">已按爆款优先级排序（未来 N 天 DO 出库量 + ABC）。<a class="goto-link" href="inbound.html">前往入库作业逐单确认 ›</a></div>
-        </div>
-
-        <div class="bub u">DO-88 怎么拣</div>
-        <div class="rescard">
-          <div class="rh">📤 出库作业 · DO-88 <span class="pill">待拣配</span></div>
-          <div class="rb">顺路取顺序：巷道01(3)→05(2)→21(4，加权集中度超标)。<a class="goto-link" href="outbound.html">前往出库作业拣配 ›</a></div>
-        </div>
-
-        <div class="bub u">把 21 巷道的茉莉柚茶收拢到 01</div>
-        <div class="confirm">
-          <div class="ch">⚠ 确认卡 · 移库操作（写操作）</div>
-          <div class="cl"><b>物料</b><span>3573743144K55G / PET500 茉莉柚茶</span></div>
-          <div class="cl"><b>数量</b><span>40 板（批号 GJP2571221）</span></div>
-          <div class="cl"><b>从 → 到</b><span>巷道 21 → 巷道 01（近站台预留带内）</span></div>
-          <div class="cl"><b>影响</b><span>同物料跨巷道数 6 → 2</span></div>
-          <div class="cbtn">
-            <button class="btn ghost">取消</button>
-            <a class="btn warn" href="transfer.html" style="text-decoration:none;">确认执行（写移库台账）</a>
-          </div>
-        </div>
-
-        <div class="bub u">本周集中度怎么样？</div>
-        <div class="rescard">
-          <div class="rh">📊 KPI 卡片 <span class="pill ok">达标</span></div>
-          <div class="rb">同物料跨巷道 4.8（目标 ≤5）<br><a class="goto-link" href="kpi-dashboard.html">› 看板下钻</a></div>
-        </div>
-
-        <div class="bub u">帮我分析本周集中度下滑的原因 <span style="opacity:.8;font-size:11px;">（点击 L2 复杂问句）</span></div>
-        <div class="rescard">
-          <div class="rh">🤖 AI 分析 · 外部 LLM（脱敏后） <span class="pill warn">AI 建议</span></div>
-          <div class="rb">可能原因：① 近站台预留被 C 类占用；② 多品项 DO 增多导致跨巷道扩散；③ 降级链触发。<br>
-          <b style="color:var(--amber);">仅供参考、需人工核实，不自动执行、不写台账</b>（见 10 号 AI 冷路径设计）。</div>
-        </div>
+      <div class="body"></div>
+      <div class="inputbar">
+        <input id="chatInput" type="text" placeholder="输入问句，回车发送…" autocomplete="off">
+        <button class="btn" id="chatSendBtn">发送</button>
       </div>
     </div>
-
-    <div class="note">对话台层级：L0 按钮入口（快捷指令直达作业页）+ L2 复杂问句 / 自由输入走外部 LLM NLU（可选增强）。术语统一：<b>L1</b> 指人工确认层（决策权在人，P0-F5），非意图分层；原"规则/模板匹配层"与"L3 自主规划 Agent"命名已废除。<b>范围说明</b>：入库 / 出库 / 移库三类作业已有独立页面与按钮直达，不设语句；KPI 指标查询由看板直呈并可下钻，<b>不再单设固定语句模板</b>（避免与看板重复维护）。对话台仅提供<b>常用复杂问句 chip</b>（可点击省去打字），对应 KPI 解读 / 偏离归因 / 权重调优 / 移库方案四类冷路径能力，<b>产出仅为建议，不写台账、不自动执行</b>。对话台只负责发起与确认，业务处理仍走对应作业页（单一事实来源）。</div>
 
     <div class="foot">⑧ 对话式操作台 · 按 21/22/24 号文档生成</div>
   </main>
@@ -100,5 +62,77 @@
 
 <a href="chat.html" class="dock" title="对话式操作台">💬</a>
 <script src="assets/app.js"></script>
+<script>
+(function () {
+  // 对话台 L2 问句 chip 接线（spec「对话台 L2 问句 chip 触发统一入口」）：
+  // 点击以 chip 文案为 question（不含 intent）调 /conversation/message；
+  // write_intent=true 渲染二次确认卡（未确认不发写请求），否则 renderDualProduct 直出双产物。
+  const body = document.querySelector('.chat .body');
+  if (!body || !window.api || !window.renderDualProduct || !window.aiBody) return;
+
+  document.querySelectorAll('.qs.l2').forEach(chip => {
+    chip.addEventListener('click', () => ask(chip.textContent.trim()));
+  });
+
+  // 自由输入框（L2 自由输入走外部 LLM NLU）：回车或点击发送 → 同一 ask 通道。
+  const input = document.getElementById('chatInput');
+  const sendBtn = document.getElementById('chatSendBtn');
+  function send() {
+    const q = (input && input.value ? input.value : '').trim();
+    if (!q) return;
+    input.value = '';
+    ask(q);
+  }
+  if (sendBtn) sendBtn.addEventListener('click', send);
+  if (input) input.addEventListener('keydown', e => { if (e.key === 'Enter') send(); });
+
+  async function ask(question) {
+    const u = document.createElement('div');
+    u.className = 'bub u';
+    u.textContent = question;
+    body.appendChild(u);
+    const out = document.createElement('div');
+    body.appendChild(out);
+    try {
+      const resp = await window.api('/conversation/message', { method: 'POST', body: window.aiBody({ question }) });
+      if (resp.write_intent) renderConfirm(out, resp);
+      else window.renderDualProduct(out, resp);
+    } catch (e) {
+      out.innerHTML = '<div class="ai-card degraded"><div class="rh">请求失败</div><div class="rb">'
+        + window.escapeHtml((e.body && e.body.message) || e.message) + '</div></div>';
+    }
+  }
+
+  function renderConfirm(out, resp) {
+    // 写意图（③④）→ 二次确认卡；③ 确认后以 suggestion_id 调 weight/apply，④ 交移库落地流。
+    const ai = resp.ai ? '<div class="cl"><b>建议</b><span>' + window.escapeHtml(resp.ai).replace(/\n/g, '<br>') + '</span></div>' : '';
+    let action = '';
+    if (resp.intent === 'WEIGHT_TUNE') {
+      action = '<button class="btn warn" data-adopt>确认采纳（写权重）</button>';
+    } else if (resp.intent === 'RELOCATE_PROPOSE') {
+      action = '<a class="btn warn" style="text-decoration:none;" href="transfer.html">前往移库作业确认 ›</a>';
+    }
+    out.innerHTML = '<div class="confirm-card"><div class="ch">⚠ 二次确认卡 · 写操作（未确认不执行）</div>'
+      + ai
+      + '<div class="cbtn">' + action + '<button class="btn ghost" data-cancel>取消</button></div></div>';
+    const adopt = out.querySelector('[data-adopt]');
+    if (adopt) adopt.addEventListener('click', () => adoptWeight(out, resp));
+    const cancel = out.querySelector('[data-cancel]');
+    if (cancel) cancel.addEventListener('click', () => { cancel.textContent = '已取消'; });
+  }
+
+  async function adoptWeight(out, resp) {
+    const sid = resp.rule && resp.rule.suggestion_id;
+    if (!sid) { window.alert('缺少 suggestion_id，无法采纳'); return; }
+    try {
+      const r = await window.api('/llm/weight/apply', { method: 'POST', body: window.aiBody({ suggestion_id: sid }) });
+      out.innerHTML = '<div class="ai-rule"><div class="rh">已采纳 · 权重已更新</div><div class="rb"><pre>'
+        + window.escapeHtml(JSON.stringify(r, null, 2)) + '</pre></div></div>';
+    } catch (e) {
+      window.alert((e.body && e.body.message) || e.message);
+    }
+  }
+})();
+</script>
 </body>
 </html>

@@ -34,7 +34,6 @@
 
   <main>
     <div class="sec-head"><h2>⑥ 集中度 KPI 看板</h2><span class="sec-tag">全部角色 · 只读</span></div>
-    <p class="sec-sub">只读看板，展示收拢成效与偏离（见 18 号 KPI 验收）。出库/移库实际执行不在此页，分别到「出库作业」「移库作业」页。</p>
 
     <div class="kpis">
       <div class="kpi">
@@ -59,6 +58,11 @@
       </div>
     </div>
 
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+      <button class="btn ghost" id="kpiInterpretBtn">🤖 AI 解读（仅供参考）</button>
+    </div>
+    <div id="kpiAiResult" style="margin-bottom:16px;"></div>
+
     <div class="card">
       <h3>偏离批次表（可下钻 · 可发起移库）</h3>
       <div class="filterbar wide">
@@ -72,17 +76,17 @@
           <tr><th>批次</th><th>物料编码</th><th>物料</th><th>跨巷道数</th><th>状态</th><th>操作</th></tr>
           <tr><td>GJP2571201</td><td>MAT-50001</td><td>PET500 茉莉柚茶</td><td>2</td><td><span class="pill ok">达标</span></td><td>下钻 ›</td></tr>
           <tr><td>GJP2571221</td><td>MAT-50001</td><td>PET500 茉莉柚茶</td><td>2</td><td><span class="pill ok">达标</span></td><td>下钻 ›</td></tr>
-          <tr><td>GJP2571305</td><td>MAT-60001</td><td>PET600 矿泉水</td><td><b style="color:var(--red)">7</b></td><td><span class="pill red">超标</span></td><td><a class="goto-link" href="transfer.html">发起移库 ›</a></td></tr>
-          <tr><td>GJP2571310</td><td>MAT-60001</td><td>PET600 矿泉水</td><td>6</td><td><span class="pill red">超标</span></td><td><a class="goto-link" href="transfer.html">发起移库 ›</a></td></tr>
-          <tr><td>GJP2571333</td><td>MAT-60001</td><td>PET600 矿泉水</td><td>5</td><td><span class="pill red">超标</span></td><td><a class="goto-link" href="transfer.html">发起移库 ›</a></td></tr>
+          <tr><td>GJP2571305</td><td>MAT-60001</td><td>PET600 矿泉水</td><td><b style="color:var(--red)">7</b></td><td><span class="pill red">超标</span></td><td><a class="goto-link" href="transfer.html">发起移库 ›</a> <a class="goto-link" data-attr="MAT-60001" data-batch="GJP2571305">归因 ›</a></td></tr>
+          <tr><td>GJP2571310</td><td>MAT-60001</td><td>PET600 矿泉水</td><td>6</td><td><span class="pill red">超标</span></td><td><a class="goto-link" href="transfer.html">发起移库 ›</a> <a class="goto-link" data-attr="MAT-60001" data-batch="GJP2571310">归因 ›</a></td></tr>
+          <tr><td>GJP2571333</td><td>MAT-60001</td><td>PET600 矿泉水</td><td>5</td><td><span class="pill red">超标</span></td><td><a class="goto-link" href="transfer.html">发起移库 ›</a> <a class="goto-link" data-attr="MAT-60001" data-batch="GJP2571333">归因 ›</a></td></tr>
           <tr><td>GJP2570888</td><td>MAT-90001</td><td>包装辅材</td><td>3</td><td><span class="pill ok">达标</span></td><td>下钻 ›</td></tr>
-          <tr><td>GJP2570901</td><td>MAT-90001</td><td>包装辅材</td><td>4</td><td><span class="pill red">超标</span></td><td><a class="goto-link" href="transfer.html">发起移库 ›</a></td></tr>
+          <tr><td>GJP2570901</td><td>MAT-90001</td><td>包装辅材</td><td>4</td><td><span class="pill red">超标</span></td><td><a class="goto-link" href="transfer.html">发起移库 ›</a> <a class="goto-link" data-attr="MAT-90001" data-batch="GJP2570901">归因 ›</a></td></tr>
           <tr><td>GJP2570950</td><td>MAT-90001</td><td>包装辅材</td><td>2</td><td><span class="pill ok">达标</span></td><td>下钻 ›</td></tr>
           <tr><td>GJP2571002</td><td>MAT-50002</td><td>PET500 蜂蜜绿茶</td><td>3</td><td><span class="pill ok">达标</span></td><td>下钻 ›</td></tr>
           <tr><td>GJP2571020</td><td>MAT-50002</td><td>PET500 蜂蜜绿茶</td><td>2</td><td><span class="pill ok">达标</span></td><td>下钻 ›</td></tr>
         </table>
       </div>
-      <div class="note">表体在固定高度内滚动；支持按批次/物料/物料编码搜索与状态·跨巷道筛选；区分"新入库收拢不达标"与"历史库存拖累"；超标批次可下钻或一键发起移库。<a class="goto-link" href="transfer.html">到「移库作业」处理 ›</a></div>
+      <div id="deviationAiResult" style="margin-top:12px;"></div>
     </div>
 
     <div class="card">
@@ -95,10 +99,6 @@
         <span class="arrow">→</span>
         <span class="seg hot">巷道 21（4 项 · 加权集中度超标）</span>
       </div>
-      <div class="purpose">
-        <b>显示目的：</b>① 把同物料分散在多巷道的库存按巷道聚合成一条最短拣货动线，降低拣货员往返行走（即"以出定入"成效回看）；② 用"拣货量加权集中度"（统一验收指标）暴露入库收拢不达标处（如 DO-88 加权集中度超标、巷道 21 需 &gt;N 巷道），为移库补救 / 后续入库策略优化提供切入点；③ 只读派生，本区不执行出库，实际拣配确认在「出库作业」页。
-      </div>
-      <div style="font-size:11.5px;color:var(--muted);">顺路取质量由入库推荐质量决定，为只读派生，不重新决定落位。<a class="goto-link" href="outbound.html">到「出库作业」执行拣配 ›</a></div>
     </div>
 
     <div class="foot">⑥ 集中度 KPI 看板 · 按 21/22/24 号文档生成</div>
@@ -107,5 +107,46 @@
 
 <a href="chat.html" class="dock" title="对话式操作台常驻浮窗">💬</a>
 <script src="assets/app.js"></script>
+<script>
+(function () {
+  if (!window.api || !window.renderDualProduct || !window.aiBody) return;
+
+  // ① KPI 解读（spec「p6 KPI 解读入口」）：以 warehouse_id + 当前周期（%Y-%m）调 /llm/kpi/interpret。
+  function currentPeriod() {
+    const d = new Date();
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+  }
+  const kpiBtn = document.getElementById('kpiInterpretBtn');
+  const kpiOut = document.getElementById('kpiAiResult');
+  if (kpiBtn && kpiOut) {
+    kpiBtn.addEventListener('click', async () => {
+      kpiOut.innerHTML = '<div class="state loading"><span class="spin"></span>AI 解读中…</div>';
+      try {
+        const resp = await window.api('/llm/kpi/interpret', { method: 'POST', body: window.aiBody({ period: currentPeriod() }) });
+        window.renderDualProduct(kpiOut, resp);
+      } catch (e) {
+        kpiOut.innerHTML = '<div class="state error">' + window.escapeHtml((e.body && e.body.message) || e.message) + '</div>';
+      }
+    });
+  }
+
+  // ② 偏离归因（spec「偏离批次归因入口」）：行内「归因 ›」携带 material_code + 可选 batch_no。
+  const attrOut = document.getElementById('deviationAiResult');
+  document.querySelectorAll('[data-attr]').forEach(a => {
+    a.addEventListener('click', async () => {
+      const payload = { material_code: a.dataset.attr };
+      if (a.dataset.batch) payload.batch_no = a.dataset.batch;
+      if (attrOut) attrOut.innerHTML = '<div class="state loading"><span class="spin"></span>归因分析中…</div>';
+      try {
+        const resp = await window.api('/llm/deviation/attribute', { method: 'POST', body: window.aiBody(payload) });
+        // 归因结果以「可能原因」措辞展示（spec），不渲染成唯一结论（不出现「根因/确定为」）。
+        if (attrOut) window.renderDualProduct(attrOut, resp, { ruleLabel: '偏离事实（供参考）', aiLabel: '🤖 可能原因（供人工核实）' });
+      } catch (e) {
+        if (attrOut) attrOut.innerHTML = '<div class="state error">' + window.escapeHtml((e.body && e.body.message) || e.message) + '</div>';
+      }
+    });
+  });
+})();
+</script>
 </body>
 </html>

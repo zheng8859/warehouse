@@ -42,12 +42,20 @@
 
   <main>
     <div class="sec-head"><h2>⑤ 移库作业（偏离补救）</h2><span class="sec-tag">主管 / 仓管员 / 管理员</span></div>
-    <p class="sec-sub">筛选 → 勾选多个偏离批次 → 批量生成收拢方案并执行移库。任务来自 KPI 看板"同物料跨巷道数超标"批次（见 14 号移库降级链 + 15 号移库管线）。</p>
 
     <div class="op-banner">
       <span class="tag">移库</span>
       <b>偏离批次 → 收拢补救；移库须过 cap / 批号一致性 / 集中度校验</b>
-      <div class="sub">移库不改批号，只调整所在巷道以收拢集中度；来自 KPI 看板"一键发起移库"的批次自动带入本页队列</div>
+    </div>
+
+    <!-- ④ 移库多方案对比卡（AI 辅助 · 只读试算；落地走下方「批量生成方案」二次确认流） -->
+    <div class="card">
+      <h3>多方案对比（AI 辅助 · 试算不落地）</h3>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+        <input class="f-inp" id="relocateProposeMaterial" placeholder="物料编码（如 MAT-60001）" style="max-width:260px;">
+        <button class="btn ghost" id="relocateProposeBtn">生成多方案对比</button>
+      </div>
+      <div id="relocateProposeResult" style="margin-top:10px;"></div>
     </div>
 
     <!-- 偏离批次清单（只读来源，移库任务的依据；来自 GET /api/deviation） -->
@@ -89,7 +97,6 @@
             <tbody id="planBody"></tbody>
           </table>
         </div>
-        <div class="note">逐单「微调」可改目标巷道（须经 cap 余量 / 批号一致性 / 集中度规则校验）；「驳回」移出本次批量；默认沿用系统建议即「接受」。校验失败红提示，不执行。</div>
         <div class="batchfoot">
           <span>平均收拢 <b id="avgCross">—</b></span>
           <span class="pill" id="planPill">未生成</span>
@@ -455,6 +462,55 @@
   generatePlanBtn.addEventListener('click', generatePlan);
   loadDeviations();
   loadPageData();
+})();
+</script>
+<script>
+(function () {
+  // ④ 移库多方案对比（spec「p5 移库多方案对比卡」）：试算只读，三档并列 + 量化代价；
+  // 落地复用本页既有「批量生成方案→批量执行移库」二次确认流，不在本卡写台账。
+  const input = document.getElementById('relocateProposeMaterial');
+  const btn = document.getElementById('relocateProposeBtn');
+  const out = document.getElementById('relocateProposeResult');
+  if (!btn || !out || !window.api || !window.aiBody) return;
+  btn.addEventListener('click', async () => {
+    const material_code = (input && input.value ? input.value : '').trim();
+    if (!material_code) { out.innerHTML = '<div class="state error">请先输入物料编码</div>'; return; }
+    out.innerHTML = '<div class="state loading"><span class="spin"></span>生成多方案中…</div>';
+    try {
+      const resp = await window.api('/llm/relocate/propose', { method: 'POST', body: window.aiBody({ material_code: material_code }) });
+      renderRelocate(out, resp);
+    } catch (e) {
+      out.innerHTML = '<div class="state error">' + window.escapeHtml((e.body && e.body.message) || e.message) + '</div>';
+    }
+  });
+
+  function renderRelocate(out, resp) {
+    const cur = (resp.rule && resp.rule.metrics && resp.rule.metrics.current) || {};
+    const plans = (resp.rule && resp.rule.metrics && resp.rule.metrics.plans) || [];
+    let html = '<div class="ai-rule"><div class="rh">当前分布（只读试算）</div><div class="rb">巷道 '
+      + window.escapeHtml((cur.aisles || []).join('、')) + ' · 跨巷道 ' + (cur.cross_aisle != null ? cur.cross_aisle : '—')
+      + ' · ' + (cur.plates != null ? cur.plates : '—') + ' 板</div></div>';
+    html += '<table class="btab"><thead><tr><th>方案</th><th>目标巷道</th><th>清空巷道</th>'
+      + '<th>跨巷道</th><th>搬移板数</th><th>车次</th><th>时长</th><th>校验</th></tr></thead><tbody>';
+    plans.forEach(p => {
+      const cross = p.cross_aisle || {};
+      html += '<tr><td><b>' + window.escapeHtml(p.name) + '</b>'
+        + (p.valid ? ' <span class="pill ok">可行</span>' : ' <span class="pill red">不可行</span>') + '</td>'
+        + '<td>' + window.escapeHtml((p.target_aisles || []).join('、')) + '</td>'
+        + '<td>' + window.escapeHtml((p.clear_aisles || []).join('、')) + '</td>'
+        + '<td>' + (cross.before != null ? cross.before + ' → ' + cross.after : '—') + '</td>'
+        + '<td>' + (p.plates_to_move != null ? p.plates_to_move : '—') + '</td>'
+        + '<td>' + (p.trips != null ? p.trips : '—') + '</td>'
+        + '<td>' + (p.hours != null ? p.hours : '—') + '</td>'
+        + '<td>' + (p.cap_ok ? '<span class="pill ok">cap 足</span>' : '<span class="pill red">cap 不足</span>')
+        + ' ' + (p.batch_unchanged ? '<span class="pill ok">批号一致</span>' : '<span class="pill red">批号变更</span>')
+        + ' ' + (p.concentration_improved ? '<span class="pill ok">集中度改善</span>' : '<span class="pill red">未改善</span>') + '</td></tr>';
+    });
+    html += '</tbody></table>';
+    if (resp.ai) html += '<div class="ai-card"><div class="rh">🤖 AI 权衡叙事</div><div class="rb">'
+      + window.escapeHtml(resp.ai).replace(/\n/g, '<br>') + '</div></div>';
+    out.innerHTML = html;
+  }
 })();
 </script>
 </body>

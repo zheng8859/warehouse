@@ -83,6 +83,7 @@ if (loginBtn) {
       sessionStorage.setItem('token', data.access_token);
       sessionStorage.setItem('role', data.role);
       sessionStorage.setItem('user_id', String(data.user_id));
+      if (data.warehouse_id) sessionStorage.setItem('warehouse_id', data.warehouse_id);
       window.location.href = 'data-import.html';
     } catch (e) {
       loginBtn.textContent = '登录';
@@ -115,9 +116,35 @@ document.querySelectorAll('.cf-slider input[type=range]').forEach(slider => {
   update();
 });
 
-// 冷路径开关 + 预留开关（绿/灰切换）
+// 冷路径开关（data-toggle="ai"）接 POST /api/llm/toggle（仅 admin，ai.toggle）；
+// 其余开关（如预留开关）保持纯 CSS 绿/灰切换，不接端点。
 document.querySelectorAll('.cf-switch').forEach(sw => {
-  sw.addEventListener('click', () => sw.classList.toggle('off'));
+  const isAi = sw.dataset.toggle === 'ai';
+  if (!isAi) {
+    sw.addEventListener('click', () => sw.classList.toggle('off'));
+    return;
+  }
+  // 冷路径默认关闭（cold_path_enabled=false），页面加载先落「关」；无只读状态端点，状态仅随切换回显。
+  sw.classList.add('off');
+  if (getRole() !== 'admin') {
+    sw.style.cursor = 'not-allowed';
+    sw.title = '仅管理员可切换冷路径开关';
+    return;
+  }
+  sw.addEventListener('click', async () => {
+    const enabled = sw.classList.contains('off');   // 当前「关」→ 点击即「开」
+    try {
+      const resp = await api('/llm/toggle', { method: 'POST', body: { enabled: enabled } });
+      sw.classList.toggle('off', !resp.cold_path_enabled);
+      const stateEl = document.getElementById('aiSwitchState');
+      if (stateEl) {
+        stateEl.textContent = resp.cold_path_enabled ? '开启' : '关闭';
+        stateEl.style.color = resp.cold_path_enabled ? 'var(--green)' : 'var(--muted)';
+      }
+    } catch (e) {
+      alert((e.body && e.body.message) || e.message);
+    }
+  });
 });
 
 // 入库作业微调下钻：切换推荐理由卡显隐
@@ -183,6 +210,57 @@ async function api(path, options) {
   return data;
 }
 window.api = api;
+
+// 转义 HTML（规则/AI 文本均来自后端，但仍按不可信处理，防注入）。
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+window.escapeHtml = escapeHtml;
+
+// 冷路径/对话台请求都要求 warehouse_id（auth.LoginResponse 已回传，登录时已存）。
+// aiBody 合并 {warehouse_id, ...payload}；缺失时抛「请重新登录」而非发请求（避免 422）。
+function aiBody(payload) {
+  const warehouse_id = sessionStorage.getItem('warehouse_id');
+  if (!warehouse_id) {
+    const err = new Error('请重新登录（缺少仓库编码）');
+    err.status = 401;
+    throw err;
+  }
+  return Object.assign({ warehouse_id: warehouse_id }, payload || {});
+}
+window.aiBody = aiBody;
+
+// 降级文案（spec「双产物建议卡渲染」）：ai_generated=false 时按 degraded_reason 给「人话」，
+// 不渲染 AI 叙事区、不报错（降级不静默）。
+const DEGRADED_TEXT = {
+  provider_unconfigured: '未配置外部 LLM，仅展示规则结果',
+  budget_exhausted: '本月 AI 预算已用尽，仅展示规则结果',
+  llm_timeout: 'AI 分析超时，仅展示规则结果',
+  llm_unavailable: 'AI 服务暂不可用，仅展示规则结果',
+  insufficient_samples: '历史批次样本不足，仅展示统计摘要'
+};
+
+// 双产物渲染（spec「双产物建议卡渲染」+ design D2）：rule 恒有（系统结论，常规样式）
+// + ai 可选（琥珀「AI 建议」；服务端已注入标注，前端逐字渲染、不重复前置）
+// + ai_generated=false 时降级说明。
+function renderDualProduct(container, resp, opts) {
+  opts = opts || {};
+  // 卡片标题可被调用方覆盖：归因用「可能原因」而非「系统结论」措辞（spec「偏离批次归因入口」）。
+  const ruleLabel = opts.ruleLabel || '规则结果（系统结论）';
+  const aiLabel = opts.aiLabel || '🤖 AI 建议';
+  const rule = resp.rule || {};
+  let html = '<div class="ai-rule"><div class="rh">' + ruleLabel + '</div>'
+    + '<div class="rb"><pre>' + escapeHtml(JSON.stringify(rule, null, 2)) + '</pre></div></div>';
+  if (resp.ai) {
+    html += '<div class="ai-card"><div class="rh">' + aiLabel + '</div><div class="rb">'
+      + escapeHtml(resp.ai).replace(/\n/g, '<br>') + '</div></div>';
+  } else if (resp.ai_generated === false) {
+    html += '<div class="ai-card degraded"><div class="rh">AI 未生成（降级）</div><div class="rb">'
+      + escapeHtml(DEGRADED_TEXT[resp.degraded_reason] || resp.degraded_reason || 'AI 分析不可用') + '</div></div>';
+  }
+  container.innerHTML = html;
+}
+window.renderDualProduct = renderDualProduct;
 
 // 文件 → base64（零构建上传走 JSON 而非 multipart，design.md D7）。
 // 返回不含 data: 前缀的纯 base64 串（对应 UploadRequest.content_base64）。
