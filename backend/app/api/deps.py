@@ -30,8 +30,9 @@ from fastapi import Request
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.api.permissions import Permission, check
+from app.core.config import settings
 from app.core.enums import AccountStatus
-from app.core.errors import PermissionDenied, Unauthenticated
+from app.core.errors import ColdPathDisabled, PermissionDenied, Unauthenticated
 from app.models.identity import Account
 
 #: 账号不可用时的统一说法。**不区分**「不存在」与「状态不是 active」：
@@ -126,3 +127,19 @@ def require_permission(permission: Permission) -> Callable[[Request], None]:
             )
 
     return _checker
+
+
+def require_cold_path_enabled() -> None:
+    """冷路径开关守卫（D2）：关闭（默认）→ 409 `cold_path_disabled`。`toggle` 不挂此依赖。
+
+    开关关闭 = 「能力整体关闭」是可纠正客户端错误（先开再调）→ 409；LLM 侧失败 =
+    「能力开了但没吐字」是降级 → 200 + `degraded_reason`。两者不能都 200（D2），否则
+    前端无法区分「去开开关」与「AI 临时不可用」。
+
+    供两处复用（`routes/llm.py` 的五个能力端点、`routes/conversation.py` 的统一入口），
+    文案**只此一份** —— 前端据此分流「功能没开」与「AI 没吐字」。
+    """
+    if not settings.cold_path_enabled:
+        raise ColdPathDisabled(
+            "冷路径未开启（cold_path_enabled=false）—— 请管理员先经 POST /api/llm/toggle 开启"
+        )

@@ -12,9 +12,9 @@
 - **采纳落地**：`weight/apply`（`ai.weight.update`）—— 规则校验写 `WeightConfig`
   （`services/weight_tune.apply_weight`），无 LLM 叙事，非双产物。
 
-开关守卫（`_require_cold_path_enabled`）声明在权限依赖**之前**：开关关闭时任何角色都
-得 409 `cold_path_disabled`（spec「任意角色 → 409」）—— 先回答「功能开没开」，再回答
-「你够不够格」。`toggle` 之外的五端点都挂它。
+开关守卫（`require_cold_path_enabled`，见 `deps.py`）声明在权限依赖**之前**：开关关闭时
+任何角色都得 409 `cold_path_disabled`（spec「任意角色 → 409」）—— 先回答「功能开没开」，
+再回答「你够不够格」。`toggle` 之外的五端点都挂它。
 
 红线 2（LLM 不直接执行写操作）在这里的落点：`weight/apply` 与 `relocate/propose` 都不
 写台账；`weight/apply` 采纳的是规则算的拟采纳权重（红线 3），`relocate/propose` 只试算、
@@ -25,10 +25,9 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.api.deps import current_account, get_db, require_permission
+from app.api.deps import current_account, get_db, require_cold_path_enabled, require_permission
 from app.api.permissions import Permission
 from app.core.config import settings
-from app.core.errors import ColdPathDisabled
 from app.llm import capabilities
 from app.models.configuration import WEIGHT_FACTORS
 from app.models.identity import Account
@@ -46,14 +45,6 @@ from app.schemas.llm import (
 from app.services.weight_tune import apply_weight
 
 router = APIRouter(prefix="/api/llm")
-
-
-def _require_cold_path_enabled() -> None:
-    """开关守卫（D2）：关闭（默认）→ 409 `cold_path_disabled`。`toggle` 不挂此依赖。"""
-    if not settings.cold_path_enabled:
-        raise ColdPathDisabled(
-            "冷路径未开启（cold_path_enabled=false）—— 请管理员先经 POST /api/llm/toggle 开启"
-        )
 
 
 def _dual(product: capabilities.DualProduct) -> DualProductResponse:
@@ -80,7 +71,7 @@ def toggle(
 def kpi_interpret(
     payload: KpiInterpretRequest,
     session: Session = Depends(get_db),
-    _cold: None = Depends(_require_cold_path_enabled),
+    _cold: None = Depends(require_cold_path_enabled),
     _perm: None = Depends(require_permission(Permission.AI_ASSIST)),
 ) -> DualProductResponse:
     """① KPI 解读（只读，`ai.assist`）：规则聚合 → 网关 → 双产物。"""
@@ -95,7 +86,7 @@ def kpi_interpret(
 def deviation_attribute(
     payload: DeviationAttributeRequest,
     session: Session = Depends(get_db),
-    _cold: None = Depends(_require_cold_path_enabled),
+    _cold: None = Depends(require_cold_path_enabled),
     _perm: None = Depends(require_permission(Permission.AI_ASSIST)),
 ) -> DualProductResponse:
     """② 偏离归因（只读，`ai.assist`）：规则侧多源明细 → 网关 → 双产物。"""
@@ -114,7 +105,7 @@ def deviation_attribute(
 def weight_tune(
     payload: WeightTuneRequest,
     session: Session = Depends(get_db),
-    _cold: None = Depends(_require_cold_path_enabled),
+    _cold: None = Depends(require_cold_path_enabled),
     _perm: None = Depends(require_permission(Permission.AI_ASSIST)),
 ) -> DualProductResponse:
     """③ 权重调优建议（`ai.assist`）：反事实模拟规则算 + 影子模式（PROPOSED）→ 双产物。
@@ -132,7 +123,7 @@ def weight_apply(
     payload: WeightApplyRequest,
     session: Session = Depends(get_db),
     account: Account = Depends(current_account),
-    _cold: None = Depends(_require_cold_path_enabled),
+    _cold: None = Depends(require_cold_path_enabled),
     _perm: None = Depends(require_permission(Permission.AI_WEIGHT_UPDATE)),
 ) -> WeightApplyResponse:
     """③ 采纳落地（`ai.weight.update`）：规则校验拟采纳权重 → 写新版 `WeightConfig`。
@@ -158,7 +149,7 @@ def weight_apply(
 def relocate_propose(
     payload: RelocateProposeRequest,
     session: Session = Depends(get_db),
-    _cold: None = Depends(_require_cold_path_enabled),
+    _cold: None = Depends(require_cold_path_enabled),
     _perm: None = Depends(require_permission(Permission.AI_RELOCATE_PROPOSE)),
 ) -> DualProductResponse:
     """④ 移库方案（只读，`ai.relocate.propose`）：规则算多方案 + 三重校验 → 双产物。

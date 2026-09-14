@@ -18,10 +18,10 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
-from app.api.deps import current_account, get_db, require_permission
+from app.api.deps import current_account, get_db, require_cold_path_enabled, require_permission
 from app.api.permissions import Permission, check
 from app.core.config import settings
-from app.core.errors import ColdPathDisabled, PermissionDenied, ValidationBlocked
+from app.core.errors import PermissionDenied, ValidationBlocked
 from app.llm import DegradedReason, capabilities
 from app.llm.intent import RecognizedIntent, route_intent
 from app.llm.nlu import recognize_intent, redact_text
@@ -43,14 +43,6 @@ _CAPABILITY_PERMISSION = {
     Capability.WEIGHT_TUNING: Permission.AI_ASSIST,
     Capability.RELOCATE_PLAN: Permission.AI_RELOCATE_PROPOSE,
 }
-
-
-def _guard_cold_path() -> None:
-    """开关关闭（默认）→ 409 `cold_path_disabled`（D2：可纠正客户端错误，先开再调）。"""
-    if not settings.cold_path_enabled:
-        raise ColdPathDisabled(
-            "冷路径未开启（cold_path_enabled=false）—— 请管理员先经 POST /api/llm/toggle 开启"
-        )
 
 
 def _require_material_code(recognized: RecognizedIntent) -> str:
@@ -121,7 +113,7 @@ def conversation_message(
     写意图（③④）只回建议 + `write_intent=true`，前端据此弹二次确认卡；落地走
     `weight/apply` / `relocate.operate`。本端点不写台账（红线 2）。
     """
-    _guard_cold_path()
+    require_cold_path_enabled()
 
     # 1. 识别意图：L0 结构化（确定性路由）；L2 自由文本（脱敏后外部 LLM NLU）。
     if payload.intent is not None:
