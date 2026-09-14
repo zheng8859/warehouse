@@ -22,6 +22,7 @@ from app.api.routes import (
     allocate,
     auth,
     cap,
+    conversation,
     health,
     import_,
     job,
@@ -48,6 +49,7 @@ ROUTE_MODULES = (
     allocate,
     job,
     kpi,
+    conversation,
     llm,
     health,
 )
@@ -130,7 +132,9 @@ def register_exception_handlers(app: FastAPI) -> None:
       401 凭据问题（由中间件直接返回）
       403 权限不足
       409 状态机冲突 / 乐观锁版本不一致
+      413 单请求输入超 token 上限（冷路径护栏拒绝，请拆分）
       422 校验失败（校验失败阻断，不得带病入库）
+      429 在途 LLM 调用达并发上限（冷路径护栏拒绝，稍后再试）
     """
 
     @app.exception_handler(DomainError)

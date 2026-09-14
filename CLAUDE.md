@@ -206,11 +206,12 @@ WAL 下多读单写。应用**必须单进程运行**，**不得加 `--workers`*
 ```
 <type>(<scope>): <subject>
 type : feat / fix / test / refactor / docs / chore / perf
-scope: model / auth / engine / job / import / cap / eval / ui / env / golden-NNN
+scope: model / auth / engine / job / import / cap / eval / ui / env / ai / golden-NNN
 ```
 
 `env` 为 2026-09-11 新增，`00` §4.2 正本与 `check_commit_msg.py` 已同步。
 它专用于**环境搭建 / 脚手架**等非子系统改动（阶段一）；其余 scope 均对应一个子系统。
+`ai` 为 2026-09-14 新增，对应**冷路径 AI 辅助**子系统（`backend/app/llm/`，阶段五）。
 **scope 必填** —— 校验正则硬要求括号，`chore: xxx` 不通过。
 
 原子化 commit，**不攒批提交**。每完成一个模型/组件就提交。
@@ -250,11 +251,13 @@ scope: model / auth / engine / job / import / cap / eval / ui / env / golden-NNN
 `warehouse_keeper` 仓管员 · `planner` 计划员 · `supervisor` 主管 · `admin` 管理员。
 
 矩阵的权威定义在 `app/api/permissions.py`（`13` §2.2 的逐条搬运）。
-**v1 事实：细粒度 RBAC 部分落地** —— 角色菜单可见性 + 写操作二次确认，外加
-`POST /api/allocate/batch` 的端点级资源鉴权（`inbound.operate`，仅仓管员/管理员，经
-`require_permission` 依赖）；该矩阵是目标模型，其余端点的 RBAC（M5）落地后由后端 checker 强制。
+**v1 事实：细粒度 RBAC 部分落地** —— 角色菜单可见性 + 写操作二次确认，外加端点级资源
+鉴权（经 `require_permission` 依赖）：`POST /api/allocate/batch`（`inbound.operate`，仅
+仓管员/管理员）与冷路径 `POST /api/llm/*` 六端点（`ai.assist` / `ai.weight.update` /
+`ai.relocate.propose` → 仓管员/主管/管理员，`ai.toggle` → 仅管理员；`toggle` 之外的端点
+先答 409 开关守卫、再答 403 权限）；该矩阵是目标模型，其余端点的 RBAC（M5）落地后由后端 checker 强制。
 
-三层检查：认证中间件（v1，401）→ PermissionChecker（`/api/allocate/batch` 已生效，其余端点路线图，403）→ 操作确认（v1，前端确认卡）。
+三层检查：认证中间件（v1，401）→ PermissionChecker（`/api/allocate/batch` 与 `/api/llm/*` 已生效，其余端点路线图，403）→ 操作确认（v1，前端确认卡）。
 白名单：`/api/auth/login`、`/health`、`/docs`、`/openapi.json`。
 
 ---

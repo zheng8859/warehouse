@@ -28,7 +28,7 @@ from logging.config import fileConfig
 import sqlalchemy as sa
 from alembic import context
 
-# 必须导入 app.models 包 —— 它负责把 23 个模型模块全部登记到 Base.metadata。
+# 必须导入 app.models 包 —— 它负责把 26 个模型模块全部登记到 Base.metadata。
 # 只导入 base 的话 metadata 是空的，autogenerate 会以为「该删掉所有表」。
 import app.models  # noqa: F401
 from app.core.config import settings

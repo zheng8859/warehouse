@@ -99,7 +99,7 @@ def test_no_entity_anywhere_declares_a_soft_delete_column() -> None:
     断言写成「列名里不含这些片段」而不是逐个列名黑名单：前者连 `deleted_by`、
     `is_archived`、`soft_deleted_at` 这类变体一并拦住，后者只拦得住想得到的写法。
     """
-    assert len(Base.metadata.tables) == 23, "先修这个：表数为 0 时本用例会空过"
+    assert len(Base.metadata.tables) == 26, "先修这个：表数为 0 时本用例会空过"
 
     offenders = [
         f"{table.name}.{column.name}"

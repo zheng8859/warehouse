@@ -4,7 +4,7 @@
 
     <type>(<scope>): <subject>
     type : feat / fix / test / refactor / docs / chore / perf
-    scope: model / auth / engine / job / import / cap / eval / ui / env / golden-NNN
+    scope: model / auth / engine / job / import / cap / eval / ui / env / ai / golden-NNN
 
 用法（由 pre-commit 调用）：python scripts/check_commit_msg.py <commit-msg 文件>
 """
@@ -14,8 +14,8 @@ import re
 import sys
 
 TYPES = ("feat", "fix", "test", "refactor", "docs", "chore", "perf")
-#: env 覆盖环境搭建/脚手架等非子系统改动（00 §4.2 注）。其余均为子系统。
-FIXED_SCOPES = ("model", "auth", "engine", "job", "import", "cap", "eval", "ui", "env")
+#: env 覆盖环境搭建/脚手架等非子系统改动（00 §4.2 注）；ai 覆盖冷路径 AI 辅助（app/llm/，阶段五）。其余均为子系统。
+FIXED_SCOPES = ("model", "auth", "engine", "job", "import", "cap", "eval", "ui", "env", "ai")
 
 #: golden-NNN 是动态 scope（00 §4.2）。
 _GOLDEN_SCOPE = re.compile(r"^golden-\d+$")
