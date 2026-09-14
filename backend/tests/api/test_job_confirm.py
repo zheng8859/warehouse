@@ -130,6 +130,51 @@ def test_a_non_planned_order_is_rejected_per_order_and_the_rest_still_confirm(
     assert [lg.job_order_id for lg in job_api.ledgers()] == [int(id_ok)]
 
 
+def test_partial_success_summary_counts(job_api: Api) -> None:
+    """响应含 `summary{total,success,failed}` 部分成功聚合，与 `results[]` 逐单一致。
+
+    spec `transaction-base`「部分成功响应聚合一致」：3 单中 2 张 `PLANNED` 确认成功
+    （`VERIFIED`）、1 张源状态非 `PLANNED` 被逐单拒绝（记 `error`），`summary` 计
+    `{total:3, success:2, failed:1}`，且「写台账执行成功」的口径（design.md D1）把
+    `VERIFY_FAILED` 也计入 success。
+    """
+    scenario = job_api.seed(
+        job_orders=[
+            JobOrderSpec(
+                order_no="PO-01", material_code=MATERIAL, qty=40,
+                batch_no=BATCH, job_type=JobType.INBOUND, status=JobStatus.PENDING,
+            ),
+            JobOrderSpec(
+                order_no="PO-02", material_code=MATERIAL, qty=40,
+                batch_no=BATCH, job_type=JobType.INBOUND, status=JobStatus.PLANNED,
+            ),
+            JobOrderSpec(
+                order_no="PO-03", material_code=MATERIAL, qty=40,
+                batch_no=BATCH, job_type=JobType.INBOUND, status=JobStatus.PLANNED,
+            ),
+        ],
+    )
+    id_rejected, id_ok1, id_ok2 = (str(order.id) for order in scenario.job_orders)
+
+    response = job_api.client.post(
+        CONFIRM_URL,
+        json=_confirm_body([
+            _inbound_item(id_rejected), _inbound_item(id_ok1), _inbound_item(id_ok2),
+        ]),
+        headers=job_api.headers,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["summary"] == {"total": 3, "success": 2, "failed": 1}
+
+    results = {item["job_order_id"]: item for item in body["results"]}
+    assert results[id_rejected]["status"] == JobStatus.PENDING.value
+    assert results[id_rejected]["error"] is not None
+    assert results[id_ok1]["status"] == JobStatus.VERIFIED.value
+    assert results[id_ok2]["status"] == JobStatus.VERIFIED.value
+
+
 # ------------------------------------------------------------------ 报文级整批拒绝
 
 def test_an_unknown_order_rejects_the_whole_batch(job_api: Api) -> None:

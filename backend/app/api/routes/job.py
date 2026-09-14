@@ -76,6 +76,7 @@ from app.models.linkage import AisleCap, InventoryItem, Snapshot
 from app.schemas.job import (
     BatchConfirmRequest,
     BatchConfirmResponse,
+    BatchSummary,
     ConfirmItem,
     ConfirmOutcome,
     DeviationItem,
@@ -478,6 +479,16 @@ def _confirm_one(
     )
 
 
+def _summarize(results: list[ConfirmOutcome]) -> BatchSummary:
+    """部分成功聚合（design.md D1）：`success` 计写台账执行成功的单（`VERIFIED` /
+    `VERIFY_FAILED`），`failed` 由 `total - success` 反推，避免与 `results[]` 两套口径漂移。
+    """
+    success = sum(
+        1 for r in results if r.status in (JobStatus.VERIFIED, JobStatus.VERIFY_FAILED)
+    )
+    return BatchSummary(total=len(results), success=success, failed=len(results) - success)
+
+
 @router.post("/batch/confirm", response_model=BatchConfirmResponse)
 def batch_confirm(
     payload: BatchConfirmRequest,
@@ -535,7 +546,7 @@ def batch_confirm(
             ConfirmOutcome(job_order_id=item.job_order_id, status=result.status)
         )
 
-    return BatchConfirmResponse(results=results)
+    return BatchConfirmResponse(results=results, summary=_summarize(results))
 
 
 @router.post("/batch/pick-sequence", response_model=BatchPickSequenceResponse)
