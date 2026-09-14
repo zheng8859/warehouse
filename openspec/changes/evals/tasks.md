@@ -32,11 +32,11 @@
 
 ## 5. L2 集成层（24 道，API 行为，≥90%）
 
-- [ ] 5.1 写 `evals/l2_integration/test_l2_import.py`（导入 6 道：`golden_030` 缺必填列四层校验阻断、`golden_036` 货未入库顺路取提示不阻断、快照过期出库阻断）；验证：导入 API 场景通过
-- [ ] 5.2 写 `evals/l2_integration/test_l2_job.py`（作业 8 道：JobOrder 状态机 + Ledger 写入 + `golden_010` 未二次确认拦截不写台账 + 乐观锁并发冲突）；验证：`golden_010` 拦截且无台账行
-- [ ] 5.3 写 `evals/l2_integration/test_l2_kpi.py`（KPI 聚合 5 道：`golden_018` 同物料跨巷道 = 实际占用巷道数 ≤5）；验证：`golden_018` PASS
-- [ ] 5.4 写 `evals/l2_integration/test_l2_permission.py`（权限守卫 5 道：401/422/404 + `golden_022` 核心链路出域事件=0）；验证：`golden_022` 出域=0、401/422/404 各命中
-- [ ] 5.5 L2 全层通过率 ≥90%；验证：`run_evals --tier l2` 达标
+- [x] 5.1 写 `evals/l2_integration/test_l2_import.py`（导入 6 道：`golden_030` 缺必填列四层校验阻断、`golden_036` 货未入库顺路取提示不阻断、快照过期出库阻断）；验证：导入 API 场景通过
+- [x] 5.2 写 `evals/l2_integration/test_l2_job.py`（作业 8 道：JobOrder 状态机 + Ledger 写入 + `golden_010` 未二次确认拦截不写台账 + 乐观锁并发冲突）；验证：`golden_010` 拦截且无台账行
+- [x] 5.3 写 `evals/l2_integration/test_l2_kpi.py`（KPI 聚合 5 道：`golden_018` 同物料跨巷道 = 实际占用巷道数 ≤5）；验证：`golden_018` PASS
+- [x] 5.4 写 `evals/l2_integration/test_l2_permission.py`（权限守卫 5 道：401/422/404 + `golden_022` 核心链路出域事件=0）；验证：`golden_022` 出域=0、401/422/404 各命中
+- [x] 5.5 L2 全层通过率 ≥90%；验证：`run_evals --tier l2` 达标
 
 ## 6. L3 质量层（16+ 道，验收口径 + 冷路径观测，非百分比门槛）
 
