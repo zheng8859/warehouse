@@ -14,10 +14,10 @@
 
 ## 本文件当前落地的部分（阶段三）
 
-**结构 1（§10.1）与 §10.7 的批量分配往返**已落地；**结构 2~6 仍是骨架** ——
-它们分别属出库派生（阶段四）、移库（阶段四）、导入回执（阶段四）、cap 快照（阶段四）、
-KPI 卡片（阶段四）。不预先补齐的理由：那五类的字段要等各自的实现去校准，
-先写一份没人用的契约，只会在阶段四变成「改也不是、不改也不是」的第二事实来源。
+**结构 1（§10.1）、结构 2（§10.2）、结构 3（§10.3）已落地**；**结构 4~6 仍是骨架** ——
+它们分别属导入回执（阶段四）、cap 快照（阶段四）、KPI 卡片（阶段六）。不预先补齐的理由：
+那几类的字段要等各自的实现去校准，先写一份没人用的契约，只会在实现时变成
+「改也不是、不改也不是」的第二事实来源。
 
 ## 三处口径由 design.md 定，不在这里重述
 
@@ -256,3 +256,174 @@ class BatchAllocateResponse(BaseModel):
     snapshot_version: str = Field(pattern=_SNAPSHOT_VERSION_PATTERN)
     plans: list[PlanItem] = Field(default_factory=list)
     degraded_alerts: list[DegradedAlert] = Field(default_factory=list)
+
+
+# ------------------------------------------------------------------ 结构 2：顺路取顺序（17 §10.2）
+
+class PickPathItem(BaseModel):
+    """顺路取序列里的一条巷道（17 §10.2 的 `pick_sequence` 元素形）。
+
+    也是 `ConfirmItem.pick_path` 的元素（`app/schemas/job.py` 引用它）—— 巷道号按 2 位
+    文本（库位号 `[:2]`），前导 0 不得丢（CLAUDE.md §七）。
+    """
+
+    aisle: str = Field(min_length=2, max_length=2)
+    #: 该巷拣货量（= 现状库存量，`derive_pick_sequence` 不跨巷分配）。
+    qty: int = Field(ge=0)
+    #: 该巷批号集，升序（确定性）。
+    batches: list[str] = Field(default_factory=list)
+
+
+class PickSequence(BaseModel):
+    """一条 DO 的顺路取顺序（17 §10.2）：`do_no` / `pick_sequence` /
+    `weighted_concentration` / `threshold_n` / `exceeded`。
+
+    加 `snapshot_version` 簿记字段（design.md D3：本方案基于的库存视图版本，随方案
+    版本化）—— 只加不删，17 §10.2 的消费方忽略未知键。它同时是
+    `RecommendationPlan.payload_json` 的形状与响应 `plans[]` 元素的基形。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    do_no: str = Field(min_length=1)
+    pick_sequence: list[PickPathItem] = Field(default_factory=list)
+    #: 拣货量加权集中度 = 80% 降序累加所覆盖的巷道数（`concentration_aisle_count`）。
+    weighted_concentration: int = Field(ge=0)
+    threshold_n: int = Field(ge=1)
+    #: `weighted_concentration > threshold_n`，仅高亮不阻断（15-03 §6.2）。
+    exceeded: bool
+    snapshot_version: str = Field(pattern=_SNAPSHOT_VERSION_PATTERN)
+
+
+class PickPlanItem(PickSequence):
+    """响应 `plans[]` 里的一条方案：`PickSequence` + 对应回请求的作业单与方案行。
+
+    `job_order_id` / `plan_id` 是响应侧标识（对齐 `PlanItem`），**不进 payload_json**
+    —— 方案归属是 `RecommendationPlan` 的列，不是 17 §10.2 的内容。
+    """
+
+    job_order_id: str = Field(min_length=1)
+    plan_id: int
+
+
+class BatchPickSequenceRequest(BaseModel):
+    """`POST /api/job/batch/pick-sequence` 的请求体（D2）。
+
+    与 `BatchAllocateRequest` 同一形态：`job_order_ids` 必填非空、`snapshot_version`
+    是调用方声明（不是筛选器）。上限 `MAX_JOB_ORDERS_PER_BATCH` 只作常量、判在路由层。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    warehouse_id: str = Field(min_length=1, max_length=32)
+    snapshot_version: str | None = Field(default=None, pattern=_SNAPSHOT_VERSION_PATTERN)
+    job_order_ids: list[str]
+
+
+class BatchPickSequenceResponse(BaseModel):
+    """`POST /api/job/batch/pick-sequence` 的响应体（D2：分列 `plans[]` + `not_in_stock[]`）。
+
+    `not_in_stock[]` = 货未入库、无法生成顺路取的单（提示「该品项尚未入库，暂无法生成
+    顺路取」，不阻断，单停留 `PENDING`）。
+    """
+
+    bulk_batch_no: str = Field(min_length=1)
+    snapshot_version: str = Field(pattern=_SNAPSHOT_VERSION_PATTERN)
+    plans: list[PickPlanItem] = Field(default_factory=list)
+    not_in_stock: list[str] = Field(default_factory=list)
+
+
+# ------------------------------------------------------------------ 结构 3：收拢方案（17 §10.3）
+
+class ConsolidationCrossAisle(BaseModel):
+    """收拢方案里「同物料跨巷道数」的前后对照（17 §10.3 的 `expected_cross_aisle`）。"""
+
+    #: 收拢前 = `InventoryProfile.cross_aisle_count`（该物料当前占用的巷道数）。
+    before: int = Field(ge=0)
+    #: 收拢后 = `before` − 收拢后变空的 `from_aisle` 数（变空判据见 `_consolidate_to`）。
+    after: int = Field(ge=0)
+
+
+class ConsolidationPlan(BaseModel):
+    """一条移库收拢方案（17 §10.3）：`batch_no` / `material_code` / `from_aisles` /
+    `target_aisle` / `plates` / `expected_cross_aisle{before,after}` / `batch_unchanged`。
+
+    追加两个簿记字段（只加不删，17 §10.3 的消费方忽略未知键）：
+    - `degrade_reason`：主巷道 cap 不足降级到次选巷道时写明原因（降级不静默，design.md D2）。
+    - `snapshot_version`：本方案基于的库存视图版本（design.md D3，随方案版本化）——
+      也是幂等键的一部分（D4）。它同时是 `RecommendationPlan.payload_json` 的形状与
+      响应 `plans[]` 元素的基形。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    batch_no: str = Field(min_length=1)
+    material_code: str = Field(min_length=1)
+    #: 待收拢的散落巷道，按巷道号升序。方案必非空（否则就是「已集中」，走 moved_out）。
+    from_aisles: list[str] = Field(min_length=1)
+    target_aisle: str = Field(min_length=1)
+    #: 散落板总数 = `from_aisles` 板数之和（v1 板 = 格，与 `to_occupied_cells` 同口径）。
+    plates: int = Field(ge=0)
+    expected_cross_aisle: ConsolidationCrossAisle
+    #: 移库不改批号（CLAUDE.md §四）—— 结构性恒真，这里再钉一道。
+    batch_unchanged: bool = True
+    #: 主巷道容量不足降级至次选巷道时的原因；非降级方案为 None。
+    degrade_reason: str | None = Field(default=None, min_length=1)
+    snapshot_version: str = Field(pattern=_SNAPSHOT_VERSION_PATTERN)
+
+    @model_validator(mode="after")
+    def _consolidation_invariants(self) -> ConsolidationPlan:
+        if self.expected_cross_aisle.after >= self.expected_cross_aisle.before:
+            raise ValueError("收拢方案必须改善集中度（expected_cross_aisle.after < before）")
+        if self.batch_unchanged is not True:
+            raise ValueError("移库不改批号（batch_unchanged 必须为 True）")
+        return self
+
+
+class RelocatePlanItem(ConsolidationPlan):
+    """响应 `plans[]` 里的一条方案：`ConsolidationPlan` + 对应回请求的作业单与方案行。
+
+    `job_order_id` / `plan_id` 是响应侧标识（对齐 `PlanItem` / `PickPlanItem`），
+    **不进 payload_json** —— 方案归属是 `RecommendationPlan` 的列，不是 17 §10.3 的内容。
+    """
+
+    job_order_id: str = Field(min_length=1)
+    plan_id: int
+
+
+class RelocateMovedOutItem(BaseModel):
+    """响应 `moved_out[]` 里的一条：收拢不可行、移出批量的作业单 + 原因。
+
+    「降级不静默」的对外出口：主巷道 cap 不足且次选也不可行、或收拢后集中度不改善，
+    该单**不出方案**（停留 `PENDING`），只在这里写清为什么。
+    """
+
+    job_order_id: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+
+
+class BatchRelocatePlanRequest(BaseModel):
+    """`POST /api/job/batch/relocate-plan` 的请求体（D2/D6）。
+
+    与 `BatchPickSequenceRequest` 同一形态：`job_order_ids` 必填非空、`snapshot_version`
+    是调用方声明（不是筛选器）。上限 `MAX_JOB_ORDERS_PER_BATCH` 只作常量、判在路由层。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    warehouse_id: str = Field(min_length=1, max_length=32)
+    snapshot_version: str | None = Field(default=None, pattern=_SNAPSHOT_VERSION_PATTERN)
+    job_order_ids: list[str]
+
+
+class BatchRelocatePlanResponse(BaseModel):
+    """`POST /api/job/batch/relocate-plan` 的响应体（D6：分列 `plans[]` + `moved_out[]`）。
+
+    `plans[]` = 出方案并迁 `PLANNED` 的单；`moved_out[]` = 收拢不可行、移出批量的单
+    （含原因）。两列**互斥**：一张单要么出方案、要么移出批量，不会同列。
+    """
+
+    bulk_batch_no: str = Field(min_length=1)
+    snapshot_version: str = Field(pattern=_SNAPSHOT_VERSION_PATTERN)
+    plans: list[RelocatePlanItem] = Field(default_factory=list)
+    moved_out: list[RelocateMovedOutItem] = Field(default_factory=list)

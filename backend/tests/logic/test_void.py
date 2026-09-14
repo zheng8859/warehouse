@@ -135,7 +135,7 @@ def test_void_inbound_reverses(session: Session) -> None:
 # ------------------------------------------------------------------ 出库冲正：源库位回补
 
 def test_void_outbound_reverses(session: Session) -> None:
-    """出库确认后冲正：源库位库存由 10 回补到 50。"""
+    """出库确认后冲正：按拣货路径回补，库存由 10 回到 50。"""
     voider = _operator(session, "gtj_voider")
     scenario = make_scenario(
         session,
@@ -159,7 +159,7 @@ def test_void_outbound_reverses(session: Session) -> None:
         job_order=order,
         operator_id=voider.id,
         executed_at=NOW,
-        source_location_code="010104",
+        pick_path_json=[{"aisle": "01", "qty": 40, "batches": [BATCH]}],
         snapshot=scenario.snapshot,
     )
     assert _qty_at(session, scenario.snapshot.id, "010104") == 10
@@ -175,8 +175,9 @@ def test_void_outbound_reverses(session: Session) -> None:
     assert order.status is JobStatus.VOID
     reverse = _ledgers(session, order)[1]
     assert reverse.ledger_type is LedgerType.OUTBOUND
-    assert reverse.source_location_code == "010104"
+    assert reverse.source_location_code is None
     assert reverse.target_location_code is None
+    assert reverse.pick_path_json == [{"aisle": "01", "qty": 40, "batches": [BATCH]}]
     assert _qty_at(session, scenario.snapshot.id, "010104") == 50
 
 

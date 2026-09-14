@@ -251,7 +251,7 @@ def test_cl004_ledger_fields_complete(session: Session) -> None:
 # ------------------------------------------------------------------ CL-005 出库拣配读取落位 → 前后一致
 
 def test_cl005_outbound_reads_inbound_written_aisle(session: Session) -> None:
-    """入库写入巷道 01 → 出库从 01 拣配：出库台账源 = 入库台账目标，前后一致。"""
+    """入库写入巷道 01 → 出库从 01 拣配：出库拣货路径巷道 = 入库台账目标的巷道，前后一致。"""
     operator = _operator(session)
     scenario = make_scenario(
         session,
@@ -289,15 +289,15 @@ def test_cl005_outbound_reads_inbound_written_aisle(session: Session) -> None:
         job_order=outbound_order,
         operator_id=operator.id,
         executed_at=NOW,
-        source_location_code="010104",
+        pick_path_json=[{"aisle": "01", "qty": 40, "batches": [BATCH]}],
         snapshot=scenario.snapshot,
     )
 
     inbound_ledger = _ledgers(session, inbound_order)[0]
     outbound_ledger = _ledgers(session, outbound_order)[0]
     assert inbound_ledger.target_location_code == "010104"
-    assert outbound_ledger.source_location_code == "010104"
-    assert outbound_ledger.source_location_code == inbound_ledger.target_location_code
+    assert outbound_ledger.pick_path_json == [{"aisle": "01", "qty": 40, "batches": [BATCH]}]
+    assert outbound_ledger.pick_path_json[0]["aisle"] == inbound_ledger.target_location_code[:2]
 
 
 # ------------------------------------------------------------------ CL-006 移库执行 → 新巷道 + 旧记录留痕

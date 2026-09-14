@@ -209,20 +209,28 @@ def test_inbound_with_source_is_rejected_by_check(session: Session) -> None:
     session.rollback()
 
 
-def test_outbound_without_source_is_rejected_by_check(session: Session) -> None:
-    """出库台账没有源库位 → 拒绝（出库必须从某个库位取）。"""
+def test_outbound_without_source_is_now_allowed(session: Session) -> None:
+    """出库台账 source 可空（D7）：拣货路径走 `pick_path_json`，源库位不再必填。
+
+    旧 CHECK 的出库析取项 `source IS NOT NULL AND target IS NULL` 会把「无源出库」拒掉；
+    放宽为 `target IS NULL` 后，source=None 转合法。台账矩阵（15 附录A）仍钉「出库无
+    目标」，故 target 也留空 —— 拣货分布记在 `pick_path_json`（巷道粒度，17 §10.2）。
+    """
     operator = _operator(session)
     order = _order(session, job_type=JobType.OUTBOUND, order_no="DO-88")
 
-    with pytest.raises(IntegrityError):
-        write_ledger(
-            session,
-            job_order=order,
-            target_location_code="020301",
-            operator_id=operator.id,
-            executed_at=NOW,
-        )
-    session.rollback()
+    ledger = write_ledger(
+        session,
+        job_order=order,
+        pick_path_json=[{"aisle": "02", "qty": 40, "batches": ["GJP2571221"]}],
+        operator_id=operator.id,
+        executed_at=NOW,
+    )
+
+    assert ledger.ledger_type is LedgerType.OUTBOUND
+    assert ledger.source_location_code is None
+    assert ledger.target_location_code is None
+    assert ledger.pick_path_json == [{"aisle": "02", "qty": 40, "batches": ["GJP2571221"]}]
 
 
 def test_ledger_without_batch_no_is_rejected_before_write(session: Session) -> None:

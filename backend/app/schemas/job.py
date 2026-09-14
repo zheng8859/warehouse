@@ -20,10 +20,11 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.core.enums import JobStatus, LedgerType, VerifyResult
+from app.core.enums import AbcClass, JobStatus, LedgerType, VerifyResult
 from app.models.job import DeviationCauseKind, DeviationStatus
+from app.schemas.reason import PickPathItem
 
 #: 库位号一律 6 位文本（CLAUDE.md §七）。可空字段不给即「不提供」，给了就得 6 位 ——
 #: 与 DB 的 `_LOCATION_LEN` 同一口径，报文层先拦，避免 500。
@@ -43,6 +44,9 @@ class ConfirmItem(BaseModel):
     job_order_id: str = Field(min_length=1)
     source_location_code: str | None = _LOCATION_CODE
     target_location_code: str | None = _LOCATION_CODE
+    #: 出库最终拣货路径（巷道序，`17` §10.2 的 `pick_sequence` 元素形）。可空 = 未微调，
+    #: 编排读该单当前方案的 `pick_sequence` 回退（D4）。
+    pick_path: list[PickPathItem] | None = None
     #: 实际执行数量。可空 = 取作业单上的计划量（`confirm._confirm_and_execute` 的默认）。
     actual_qty: int | None = Field(default=None, ge=1)
     #: 乐观锁版本号（spec `data-model`「并发确认仅一方成功」）：调用方**读的时候**看到的
@@ -162,3 +166,36 @@ class DeviationItem(BaseModel):
     cause_kind: DeviationCauseKind
     status: DeviationStatus
     created_at: datetime
+
+
+class JobQueueItem(BaseModel):
+    """`GET /api/jobs` 返回的一行作业队列（入库作业页 p3 的多选队列）。
+
+    投影 spec `transaction-base`「入库作业队列查询」点名的字段，并额外带
+    `job_order_id`（`str(JobOrder.id)` 形态）与 `lock_version`（openspec/changes/
+    inbound-domain/design.md D2）—— 队列是「分配 → 确认」写链的入口视图，缺了这两列
+    p3 无法把选中项喂给 `POST /api/allocate/batch`（要 `job_order_ids`）与
+    `POST /api/job/batch/confirm`（要 `job_order_id` + `lock_version` 乐观锁）。
+
+    `job_order_id` 用 `validation_alias="id"` 从 ORM 行取 `id` 并 `str()` 化，
+    与本模块第 1 条口径一致（线上形态统一为十进制正整数串）。
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    job_order_id: str = Field(validation_alias="id")
+    order_no: str
+    line_no: str
+    material_code: str
+    material_name: str | None
+    qty: int
+    abc_class: AbcClass | None
+    batch_no: str | None
+    status: JobStatus
+    bulk_batch_no: str | None
+    lock_version: int
+
+    @field_validator("job_order_id", mode="before")
+    @classmethod
+    def _stringify_id(cls, value: object) -> str:
+        return str(value)

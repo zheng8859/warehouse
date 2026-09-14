@@ -138,11 +138,17 @@ _DEGRADE_CHECK = "(degraded = 0) OR (degrade_reason IS NOT NULL)"
 #: 15 附录A 的三类台账字段矩阵：入库无源库位、出库无目标库位、移库两者都有。
 #: 把矩阵写成 CHECK 而不是留给服务层自觉 —— 「入库台账里冒出一个源库位」在按巷道
 #: 汇总 cap 增量时（16 §6.3）会被当成一次出库，静默地多减一格。
+#:
+#: 出库的源库位**可空**（D7）：出库确认记录的拣货路径是**巷道粒度**的 `pick_path_json`
+#: （顺路取按巷道聚合，17 §10.2），不再是单一源库位 —— cap 增量从 `pick_path_json`
+#: 逐巷扣减（`app/cap/increment.py`），故 `source_location_code` 转可空。
+#: 目标库位仍必空（出库无目标）；「给了源库位就必须是 6 位」由 `source_location_code_len6`
+#: 单独把守，与本 CHECK 正交。
 _LEDGER_LOCATION_CHECK = (
     f"(ledger_type = '{LedgerType.INBOUND.value}'"
     " AND source_location_code IS NULL AND target_location_code IS NOT NULL)"
     f" OR (ledger_type = '{LedgerType.OUTBOUND.value}'"
-    " AND source_location_code IS NOT NULL AND target_location_code IS NULL)"
+    " AND target_location_code IS NULL)"
     f" OR (ledger_type = '{LedgerType.RELOCATE.value}'"
     " AND source_location_code IS NOT NULL AND target_location_code IS NOT NULL)"
 )

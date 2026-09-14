@@ -75,12 +75,13 @@ def _ledger_count(session: Session, job_order: JobOrder) -> int:
     )
 
 
-def _apply(session: Session, *, order: JobOrder, operator: Account, snapshot, source=None, target=None, is_reversal: bool = False) -> Ledger:
+def _apply(session: Session, *, order: JobOrder, operator: Account, snapshot, source=None, target=None, pick_path_json=None, is_reversal: bool = False) -> Ledger:
     ledger = write_ledger(
         session,
         job_order=order,
         source_location_code=source,
         target_location_code=target,
+        pick_path_json=pick_path_json,
         operator_id=operator.id,
         executed_at=NOW,
         is_reversal=is_reversal,
@@ -148,6 +149,82 @@ def test_outbound_increment_deletes_row_at_zero(session: Session) -> None:
     _apply(session, order=scenario.job_orders[0], operator=operator, snapshot=scenario.snapshot, source="010104")
 
     assert _qty_at(session, scenario.snapshot.id, "010104") is None
+
+
+# ------------------------------------------------------------------ 出库按拣货路径逐巷扣减（D7）
+
+def test_outbound_increment_decrements_per_aisle_from_pick_path(session: Session) -> None:
+    """出库按 `pick_path_json` 逐巷扣减：源库位可空，拣货路径跨巷。
+
+    巷道粒度扣减（D7 粒度说明）：`pick_path_json` 只到巷道，`InventoryItem` 到库位，
+    扣减按巷内库位号升序确定性分配 —— 断言只盯巷道总量。
+    """
+    operator = _operator(session)
+    scenario = make_scenario(
+        session,
+        inventory=[
+            InventorySpec(location_code="010101", material_code=MATERIAL, batch_no=BATCH, qty=30),
+            InventorySpec(location_code="020101", material_code=MATERIAL, batch_no=BATCH, qty=20),
+        ],
+        job_orders=[
+            JobOrderSpec(order_no="DO-88", material_code=MATERIAL, qty=40, batch_no=BATCH, job_type=JobType.OUTBOUND)
+        ],
+    )
+    pick_path = [
+        {"aisle": "01", "qty": 30, "batches": [BATCH]},
+        {"aisle": "02", "qty": 10, "batches": [BATCH]},
+    ]
+    _apply(session, order=scenario.job_orders[0], operator=operator, snapshot=scenario.snapshot, pick_path_json=pick_path)
+
+    assert _qty_at(session, scenario.snapshot.id, "010101") is None  # 30 − 30 → 删行
+    assert _qty_at(session, scenario.snapshot.id, "020101") == 10  # 20 − 10
+
+
+def test_outbound_increment_without_pick_path_or_source_is_blocked(session: Session) -> None:
+    """出库台账既无拣货路径也无源库位 → `ValidationBlocked`（D7：不静默）。"""
+    operator = _operator(session)
+    scenario = make_scenario(
+        session,
+        inventory=[InventorySpec(location_code="010101", material_code=MATERIAL, batch_no=BATCH, qty=30)],
+        job_orders=[
+            JobOrderSpec(order_no="DO-88", material_code=MATERIAL, qty=40, batch_no=BATCH, job_type=JobType.OUTBOUND)
+        ],
+    )
+    order = scenario.job_orders[0]
+
+    with pytest.raises(ValidationBlocked):
+        _apply(session, order=order, operator=operator, snapshot=scenario.snapshot)
+
+
+def test_outbound_pick_path_reversal_restores_aisle_total(session: Session) -> None:
+    """出库冲正回补：反向行按同一份拣货路径逐巷加回（巷道总量正确）。
+
+    D7 粒度说明的直接后果：回补只能保证巷道总量，加回到巷内首行（库位号升序）。
+    """
+    operator = _operator(session)
+    scenario = make_scenario(
+        session,
+        inventory=[
+            InventorySpec(location_code="010101", material_code=MATERIAL, batch_no=BATCH, qty=50),
+            InventorySpec(location_code="020101", material_code=MATERIAL, batch_no=BATCH, qty=20),
+        ],
+        job_orders=[
+            JobOrderSpec(order_no="DO-88", material_code=MATERIAL, qty=15, batch_no=BATCH, job_type=JobType.OUTBOUND)
+        ],
+    )
+    order = scenario.job_orders[0]
+    pick_path = [
+        {"aisle": "01", "qty": 10, "batches": [BATCH]},
+        {"aisle": "02", "qty": 5, "batches": [BATCH]},
+    ]
+    _apply(session, order=order, operator=operator, snapshot=scenario.snapshot, pick_path_json=pick_path)
+    assert _qty_at(session, scenario.snapshot.id, "010101") == 40
+    assert _qty_at(session, scenario.snapshot.id, "020101") == 15
+
+    _apply(session, order=order, operator=operator, snapshot=scenario.snapshot, pick_path_json=pick_path, is_reversal=True)
+
+    assert _qty_at(session, scenario.snapshot.id, "010101") == 50
+    assert _qty_at(session, scenario.snapshot.id, "020101") == 20
 
 
 def test_relocate_increment_moves_source_to_target(session: Session) -> None:

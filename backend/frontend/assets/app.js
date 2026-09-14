@@ -56,14 +56,14 @@ cNav.forEach(b => b.addEventListener('click', () => {
   document.getElementById(b.dataset.ctab).classList.remove('hidden');
 }));
 
-// 登录失败演示 + 密码可见性切换
+// 登录：接真实认证（13 §7.2 / 22 §2.1）。角色由账号决定，不再用演示下拉；
+// 凭据与会话事实写入会话级存储（13 §8.1：token / role / user_id），登出即清空这几项。
 const loginBtn = document.getElementById('loginBtn');
 const loginErr = document.getElementById('loginErr');
 const loginUser = document.getElementById('loginUser');
 const loginPwd = document.getElementById('loginPwd');
-const loginRole = document.getElementById('loginRole');
 if (loginBtn) {
-  loginBtn.addEventListener('click', () => {
+  loginBtn.addEventListener('click', async () => {
     const u = loginUser.value.trim();
     const p = loginPwd.value.trim();
     if (!u || !p) {
@@ -74,12 +74,23 @@ if (loginBtn) {
       return;
     }
     loginErr.classList.remove('show');
-    sessionStorage.setItem('role', loginRole ? loginRole.value : 'admin');
+    loginUser.classList.remove('err');
+    loginPwd.classList.remove('err');
     loginBtn.textContent = '登录中…';
     loginBtn.disabled = true;
-    setTimeout(() => {
+    try {
+      const data = await window.api('/auth/login', { method: 'POST', body: { username: u, password: p } });
+      sessionStorage.setItem('token', data.access_token);
+      sessionStorage.setItem('role', data.role);
+      sessionStorage.setItem('user_id', String(data.user_id));
       window.location.href = 'data-import.html';
-    }, 600);
+    } catch (e) {
+      loginBtn.textContent = '登录';
+      loginBtn.disabled = false;
+      // 登录失败只有一种说法（13 §6.1 / 22 §2.1）：后端 401 的 message 即「账号或密码错误」。
+      loginErr.textContent = (e && e.body && e.body.message) || '账号或密码错误';
+      loginErr.classList.add('show');
+    }
   });
 }
 const pwdToggle = document.getElementById('pwdToggle');
@@ -156,7 +167,10 @@ async function api(path, options) {
     opts.headers['Content-Type'] = 'application/json';
     opts.body = JSON.stringify(opts.body);
   }
-  const resp = await fetch(path, opts);
+  // 后端所有业务端点都在 `/api` 前缀下（app/core/config.py 的 `api_prefix="/api"`）。
+  // 页面只传相对 API 路径（如 `/jobs`、`/import/session`、`/allocate/batch`），
+  // 这里统一补前缀，避免各页把 `/api` 散落成字面量；相对 `fetch` 也要求前后端同源。
+  const resp = await fetch('/api' + path, opts);
   const text = await resp.text();
   let data = null;
   if (text) { try { data = JSON.parse(text); } catch (e) { data = text; } }
