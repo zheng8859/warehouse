@@ -124,10 +124,10 @@ def test_migration_builds_master_data_tables(migrated_engine: Engine) -> None:
     assert "alembic_version" in names, "建库经迁移的标志（D8）"
 
 
-# ---------------------------------------------------------------- 6.7 阶段二终点：23 个实体
+# ---------------------------------------------------------------- 6.7 阶段二终点：23 + 冷路径 3 = 26 个实体
 
-#: 17 号四条数据链 + 度量 / 身份 / 配置 —— 23 个实体，按 17 §一 的分组。
-#: 主数据 6 · 衔接 5 · 作业 5 · KPI 1 · 身份 1 · 配置 5。
+#: 17 号四条数据链 + 度量 / 身份 / 配置 + 冷路径链 —— 26 个实体，按 17 §一 的分组。
+#: 主数据 6 · 衔接 5 · 作业 5 · KPI 1 · 身份 1 · 配置 5 · 冷路径 3。
 ALL_ENTITY_TABLES = frozenset({
     # 主数据链
     "warehouses", "aisles", "locations", "aisle_stations", "materials", "batches",
@@ -140,11 +140,13 @@ ALL_ENTITY_TABLES = frozenset({
     # 配置与对话
     "weight_configs", "capacity_configs", "field_mapping_configs",
     "prompt_templates", "conversation_contexts",
+    # 冷路径链（10 / 29，非台账）
+    "ai_suggestions", "conversation_logs", "ai_cost_quotas",
 })
 
 
-def test_migration_builds_exactly_the_twenty_three_entities(migrated_engine: Engine) -> None:
-    """`alembic upgrade head` 后**恰好** 23 张实体表（本阶段的终检，spec「23 实体」）。
+def test_migration_builds_exactly_the_twenty_six_entities(migrated_engine: Engine) -> None:
+    """`alembic upgrade head` 后**恰好** 26 张实体表（spec「26 实体」）。
 
     断言取**等于**而不是「包含」：多一张是有人绕开迁移建了表（`autogenerate` 迟早
     想删掉它，或更糟 —— 它悄悄留在库里成为第二套事实来源），少一张是某个实体的迁移
@@ -152,14 +154,14 @@ def test_migration_builds_exactly_the_twenty_three_entities(migrated_engine: Eng
     """
     names = set(inspect(migrated_engine).get_table_names()) - {"alembic_version"}
 
-    assert len(ALL_ENTITY_TABLES) == 23, "常量本身写错了，先修这个"
+    assert len(ALL_ENTITY_TABLES) == 26, "常量本身写错了，先修这个"
     assert names == ALL_ENTITY_TABLES, (
         f"多出：{names - ALL_ENTITY_TABLES}；缺少：{ALL_ENTITY_TABLES - names}"
     )
 
 
-def test_metadata_declares_exactly_the_twenty_three_entities() -> None:
-    """模型侧的同一件事：`Base.metadata` 里也是这 23 张表。
+def test_metadata_declares_exactly_the_twenty_six_entities() -> None:
+    """模型侧的同一件事：`Base.metadata` 里也是这 26 张表。
 
     上面的迁移断言验「库里有什么」，这条验「模型声明了什么」—— 两者一起才能说明
     「模型与迁移一一对应」。只查库，漏掉一个实体的模型会让 `create_all` 的内存测试库

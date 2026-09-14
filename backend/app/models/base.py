@@ -53,7 +53,7 @@ def utcnow() -> datetime:
 
 
 class Base(DeclarativeBase):
-    """全部 23 个实体的声明式基类。"""
+    """全部 26 个实体的声明式基类。"""
 
     metadata = MetaData(naming_convention=NAMING_CONVENTION)
 

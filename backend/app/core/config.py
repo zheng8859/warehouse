@@ -88,6 +88,18 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------ 冷路径（10 §七）
     #: 默认关闭；关闭时核心链路不受任何影响。
     cold_path_enabled: bool = False
+    #: 外部 LLM 供应商标识；空字符串 = 未配置 = 不发起任何外部调用，走「仅规则卡片」
+    #: 降级路径（`degraded_reason=provider_unconfigured`）。与 `cold_path_enabled` 是
+    #: 两个独立的门：开关管「能力整体是否可用」，provider 管「出了开关有没有模型可调」。
+    llm_provider: str = ""
+    #: 单请求 token 上限（10 §七 成本护栏第 ① 道）。覆盖 KPI 报告 / 归因输出体量
+    #: （~1500–2500 token）留余量。超限**拒绝并提示拆分**，不截断文本。
+    llm_max_tokens_per_req: int = 4096
+    #: 在途 LLM 调用并发上限（护栏第 ② 道）。单进程低频，护住外部配额。
+    llm_max_concurrency: int = 4
+    #: 月度预算硬上限（护栏第 ③ 道），单位 = token（与 `llm_max_tokens_per_req` 同单位，
+    #: 直接可比、可直接测）。超限在请求入口熔断，降级为「仅规则卡片」。
+    llm_monthly_budget: int = 1_000_000
     llm_request_timeout_s: float = 2.0
 
     @field_validator("environment")
