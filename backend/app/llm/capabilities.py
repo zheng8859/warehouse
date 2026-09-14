@@ -35,6 +35,7 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
+from app.core.enums import JobType
 from app.llm import DegradedReason, client
 from app.llm.client import Backend
 from app.llm.quota import (
@@ -46,6 +47,7 @@ from app.llm.quota import (
     record_tokens,
 )
 from app.llm.redact import redact
+from app.models.job import Deviation, DeviationCauseKind, JobOrder, RecommendationPlan
 from app.models.linkage import InventoryItem, Snapshot
 from app.services.kpi import same_material_cross_aisle_mean
 
@@ -210,6 +212,184 @@ def kpi_interpret(
         cross_aisle_mean=cross_aisle_mean,
         weighted_concentration=0,
         adoption_rate=0.0,
+    )
+    return run_cold_path(
+        settings=settings,
+        session=session,
+        warehouse_id=warehouse_id,
+        period=period,
+        rule=rule,
+        gate=gate,
+        backend=backend,
+        timeout_s=timeout_s,
+    )
+
+
+# ---------------------------------------------------------------------------
+# ② 偏离归因（只读，P1）—— 规则算异常清单 → LLM 归纳叙事，不断言唯一根因。
+# ---------------------------------------------------------------------------
+
+
+def build_deviation_rule(
+    *,
+    material_code: str,
+    batch_no: str | None = None,
+    actual_cross_aisle: int | None = None,
+    threshold_cross_aisle: int | None = None,
+    recommended_aisles: list[str] | None = None,
+    factor_scores: Mapping[str, float] | None = None,
+    factor_degraded: Mapping[str, str] | None = None,
+    plan_degraded: bool = False,
+    plan_degrade_reason: str | None = None,
+    cap_note: str | None = None,
+    actual_location_code: str | None = None,
+    cause_kind: str | None = None,
+) -> dict[str, Any]:
+    """② 规则卡片：四类候选（容量/降级/人工/非系统）+ 多源明细，全由规则侧确定。
+
+    四类候选的「事实」各从规则侧数据来（D11「异常清单规则算」）：
+
+    - **容量**：方案级降级（`degraded` = 容量不足走降级链，`17` §10.1）+ 分配时点的
+      cap 事实（`cap_note`，来自推荐理由 `breakdown` 的 cap 因子注记「可用 X/Y 板」）。
+    - **降级**：因子级降级（`factor_degraded` 逐条「因子 → 原因」）。
+    - **人工**：实际落位不在推荐巷道集内（操作员微调 / 绕开推荐）。
+    - **非系统**：偏离成因（`cause_kind`：历史库存拖累 / 新入库收拢不达标）。
+
+    本函数**只列事实、不下结论**：每个候选的 `evidence` 是事实清单，非空只说明「这条
+    线索有据可查」，系统不断言哪一条是唯一根因 —— 归纳措辞是 LLM 的事，事实不许 LLM
+    新增（红线「LLM 只叙事、不算数」在 ② 的落点）。确定性：同输入必得同清单。
+    """
+    aisles = sorted(recommended_aisles or ())
+
+    capacity_evidence: list[str] = []
+    if plan_degraded and plan_degrade_reason:
+        capacity_evidence.append(f"方案级降级（容量不足）：{plan_degrade_reason}")
+    if cap_note is not None:
+        capacity_evidence.append(f"分配时点 cap 事实：{cap_note}")
+
+    degradation_evidence: list[str] = [
+        f"{factor} 因子降级：{reason}"
+        for factor, reason in sorted((factor_degraded or {}).items())
+    ]
+
+    manual_evidence: list[str] = []
+    if (
+        actual_location_code is not None
+        and aisles
+        and actual_location_code[:2] not in aisles
+    ):
+        manual_evidence.append(
+            f"实际落位 {actual_location_code} 不在推荐巷道 {aisles} 内（人工微调 / 绕开推荐）"
+        )
+
+    nonsystem_evidence: list[str] = []
+    if cause_kind == DeviationCauseKind.LEGACY_INVENTORY_DRAG.value:
+        nonsystem_evidence.append(
+            "成因分类：历史库存拖累（散射为存量分布，非本次系统分配造成）"
+        )
+    elif cause_kind == DeviationCauseKind.NEW_INBOUND_SHORTFALL.value:
+        nonsystem_evidence.append("成因分类：新入库收拢不达标（本次落位造成）")
+
+    candidates = [
+        {"category": "容量", "evidence": capacity_evidence},
+        {"category": "降级", "evidence": degradation_evidence},
+        {"category": "人工", "evidence": manual_evidence},
+        {"category": "非系统", "evidence": nonsystem_evidence},
+    ]
+
+    metrics: dict[str, Any] = {
+        "actual_cross_aisle": actual_cross_aisle,
+        "threshold_cross_aisle": threshold_cross_aisle,
+        "recommended_aisles": aisles,
+        "factor_scores": dict(factor_scores or {}),
+        "actual_location_code": actual_location_code,
+        "candidates": candidates,
+    }
+    rule: dict[str, Any] = {"material_code": material_code, "metrics": metrics}
+    if batch_no is not None:
+        rule["batch_no"] = batch_no
+    return rule
+
+
+def deviation_attribute(
+    session: Session,
+    *,
+    warehouse_id: str,
+    material_code: str,
+    batch_no: str | None = None,
+    settings: Settings | None = None,
+    period: str | None = None,
+    gate: ConcurrencyGate | None = None,
+    backend: Backend | None = None,
+    timeout_s: float | None = None,
+) -> DualProduct:
+    """② 偏离归因：规则侧拉多源明细 → 四类候选 → 脱敏 → 网关 → 双产物。只读。
+
+    多源明细 = 偏离批次（`Deviation`）的实测/阈值 + 最近一张入库作业单的推荐巷道集、
+    6 因子分值、实际落位，与推荐理由里的分配时点 cap 事实。全部是规则侧确定性取数，
+    LLM 只归纳。无偏离 / 无方案时规则卡片仍产出（空证据），不报错。
+    """
+    settings = settings if settings is not None else Settings()
+    period = period if period is not None else datetime.now().strftime("%Y-%m")
+
+    # 1. 最近一条偏离（物料 + 可选批号）。
+    dev_stmt = sa.select(Deviation).where(
+        Deviation.warehouse_id == warehouse_id,
+        Deviation.material_code == material_code,
+    )
+    if batch_no is not None:
+        dev_stmt = dev_stmt.where(Deviation.batch_no == batch_no)
+    deviation = session.scalars(
+        dev_stmt.order_by(Deviation.created_at.desc(), Deviation.id.desc()).limit(1)
+    ).first()
+
+    # 2. 最近一张入库作业单（该物料 + 可选批号）与其最新推荐方案。
+    job_stmt = sa.select(JobOrder).where(
+        JobOrder.warehouse_id == warehouse_id,
+        JobOrder.job_type == JobType.INBOUND,
+        JobOrder.material_code == material_code,
+    )
+    if batch_no is not None:
+        job_stmt = job_stmt.where(JobOrder.batch_no == batch_no)
+    job = session.scalars(job_stmt.order_by(JobOrder.id.desc()).limit(1)).first()
+
+    plan = None
+    if job is not None:
+        plan = session.scalars(
+            sa.select(RecommendationPlan)
+            .where(RecommendationPlan.job_order_id == job.id)
+            .order_by(RecommendationPlan.id.desc())
+            .limit(1)
+        ).first()
+
+    payload = plan.payload_json if plan is not None else None
+    recommended_aisles = list(payload.get("aisles", [])) if payload else []
+    factor_scores = payload.get("factors") if payload else None
+    factor_degraded = payload.get("factor_degraded") if payload else None
+    plan_degraded = bool(payload.get("degraded", False)) if payload else False
+    plan_degrade_reason = payload.get("degrade_reason") if payload else None
+
+    # 分配时点的 cap 事实：推荐巷道集首位（主巷道）的 cap 因子注记。
+    cap_note: str | None = None
+    if payload and recommended_aisles:
+        breakdown = payload.get("breakdown", {})
+        cap_term = breakdown.get(recommended_aisles[0], {}).get("cap")
+        if isinstance(cap_term, Mapping):
+            cap_note = cap_term.get("note")
+
+    rule = build_deviation_rule(
+        material_code=material_code,
+        batch_no=batch_no,
+        actual_cross_aisle=deviation.actual_cross_aisle if deviation else None,
+        threshold_cross_aisle=deviation.threshold_cross_aisle if deviation else None,
+        recommended_aisles=recommended_aisles,
+        factor_scores=factor_scores,
+        factor_degraded=factor_degraded,
+        plan_degraded=plan_degraded,
+        plan_degrade_reason=plan_degrade_reason,
+        cap_note=cap_note,
+        actual_location_code=job.actual_location_code if job is not None else None,
+        cause_kind=deviation.cause_kind.value if deviation else None,
     )
     return run_cold_path(
         settings=settings,
