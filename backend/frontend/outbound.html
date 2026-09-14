@@ -40,12 +40,10 @@
 
   <main>
     <div class="sec-head"><h2>④ 出库作业（交货单拣配）</h2><span class="sec-tag">仓管员 / 主管（只读）/ 管理员</span></div>
-    <p class="sec-sub">筛选 → 勾选多张交货单(DO) → 批量生成顺路取并确认出库。每张拣配单对应一张交货单。出库为<b>只读派生</b>，不建基线、不改落位、仅扣减（见 14 号出库只读派生）。</p>
 
     <div class="op-banner">
       <span class="tag">出库</span>
       <b>交货单 → 驱动出库作业；出库为只读派生，不建基线</b>
-      <div class="sub">本页不展示 PO（出货单与 PO 无对应）；微调可自由指定拣货巷道（不校验 80%≤N，加权集中度仅作后验度量）</div>
     </div>
 
     <div class="filterbar wide">
@@ -84,7 +82,6 @@
             <tbody id="planBody"></tbody>
           </table>
         </div>
-        <div class="note">逐单「微调」可自由指定拣货巷道（不校验 80%≤N，加权集中度仅作后验度量）；不写落位、不修改库存（只读派生）。</div>
         <div class="batchfoot">
           <span>预测平均加权集中度 <b id="avgConc">—</b></span>
           <span class="pill" id="planPill">未生成</span>
