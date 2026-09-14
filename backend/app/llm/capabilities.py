@@ -37,6 +37,7 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings
 from app.core.config_version import pick_current_version
 from app.core.enums import JobType
+from app.core.errors import DomainError
 from app.engine.factors import load_snapshot_index
 from app.engine.reserved import available_cap
 from app.engine.scoring import load_weights
@@ -65,12 +66,37 @@ from app.services.weight_tune import (
 )
 
 
-class ColdPathRejected(Exception):
-    """冷路径请求被入口护栏**拒绝**（token 超限 / 并发饱和）—— 非降级，端点映射为 4xx。"""
+class ColdPathRejected(DomainError):
+    """冷路径请求被入口护栏**拒绝**（token 超限 / 并发饱和）—— 非降级，映射为 4xx。
+
+    与四种「降级」（200 + `degraded_reason`）不同：token 超限与并发饱和是**拒绝**，客户端
+    可纠正（拆分请求 / 稍后重试），故用 4xx 而非 200（spec「成本护栏与熔断」的「拒绝该
+    请求并提示拆分」「排队或拒绝新请求」两条场景）。两个判定映射到不同状态码与文案：
+
+    - `TOKENS_EXCEEDED` → 413「请拆分后重试」（不截断文本）；
+    - `CONCURRENCY_SATURATED` → 429「请稍后再试」。
+
+    继承 `DomainError` 让本异常走 `main.register_exception_handlers` 的同一处理器
+    （`http_status` / `code` / `message` 渲染），不再落进未捕获异常的 500。本类留在
+    `app.llm` 而非 `core/errors.py`：它要引用 `QuotaVerdict`（`app.llm.quota`），而核心
+    模块不得 import 冷路径依赖（编译期隔离）。
+    """
+
+    code = "cold_path_rejected"
+
+    _STATUS: dict[QuotaVerdict, int] = {
+        QuotaVerdict.TOKENS_EXCEEDED: 413,
+        QuotaVerdict.CONCURRENCY_SATURATED: 429,
+    }
+    _MESSAGE: dict[QuotaVerdict, str] = {
+        QuotaVerdict.TOKENS_EXCEEDED: "单请求输入超出 token 上限，请拆分后重试（不截断文本）",
+        QuotaVerdict.CONCURRENCY_SATURATED: "在途 LLM 调用已达并发上限，请稍后再试",
+    }
 
     def __init__(self, verdict: QuotaVerdict) -> None:
         self.verdict = verdict
-        super().__init__(f"cold path rejected: {verdict.value}")
+        self.http_status = self._STATUS[verdict]
+        super().__init__(self._MESSAGE[verdict])
 
 
 @dataclass(frozen=True)

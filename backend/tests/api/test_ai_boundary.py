@@ -112,3 +112,35 @@ def test_budget_exhausted_fuses_to_rule_only(job_api, monkeypatch) -> None:
     assert body["ai_generated"] is False
     assert body["degraded_reason"] == "budget_exhausted"
     assert body["rule"]  # 仅规则卡片
+
+
+def test_tokens_exceeded_rejects_413(job_api, monkeypatch) -> None:
+    """单请求输入超 token 上限 → 413 拒绝 + 提示拆分（spec「拒绝该请求」，不截断文本）。"""
+    _enable_cold_path(monkeypatch)
+    monkeypatch.setattr(settings, "llm_max_tokens_per_req", 1)  # 任何规则卡片都超限
+
+    response = job_api.client.post(
+        "/api/llm/kpi/interpret",
+        json={"warehouse_id": settings.warehouse_code},
+        headers=job_api.headers,
+    )
+    assert response.status_code == 413
+    body = response.json()
+    assert body["error"] == "cold_path_rejected"
+    assert "拆分" in body["message"]
+
+
+def test_concurrency_saturated_rejects_429(job_api, monkeypatch) -> None:
+    """在途 LLM 调用达并发上限 → 429 拒绝 + 稍后再试（spec「排队或拒绝新请求」）。"""
+    _enable_cold_path(monkeypatch)
+    monkeypatch.setattr(settings, "llm_max_concurrency", 0)  # 名额为 0 → 恒饱和
+
+    response = job_api.client.post(
+        "/api/llm/kpi/interpret",
+        json={"warehouse_id": settings.warehouse_code},
+        headers=job_api.headers,
+    )
+    assert response.status_code == 429
+    body = response.json()
+    assert body["error"] == "cold_path_rejected"
+    assert "稍后再试" in body["message"]
