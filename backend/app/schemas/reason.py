@@ -14,10 +14,10 @@
 
 ## 本文件当前落地的部分（阶段三）
 
-**结构 1（§10.1）与 §10.7 的批量分配往返**已落地；**结构 2~6 仍是骨架** ——
-它们分别属出库派生（阶段四）、移库（阶段四）、导入回执（阶段四）、cap 快照（阶段四）、
-KPI 卡片（阶段四）。不预先补齐的理由：那五类的字段要等各自的实现去校准，
-先写一份没人用的契约，只会在阶段四变成「改也不是、不改也不是」的第二事实来源。
+**结构 1（§10.1）、结构 2（§10.2）已落地**；**结构 3~6 仍是骨架** ——
+它们分别属移库（阶段四）、导入回执（阶段四）、cap 快照（阶段四）、KPI 卡片（阶段六）。不预先补齐的理由：
+那几类的字段要等各自的实现去校准，先写一份没人用的契约，只会在实现时变成
+「改也不是、不改也不是」的第二事实来源。
 
 ## 三处口径由 design.md 定，不在这里重述
 
@@ -256,3 +256,78 @@ class BatchAllocateResponse(BaseModel):
     snapshot_version: str = Field(pattern=_SNAPSHOT_VERSION_PATTERN)
     plans: list[PlanItem] = Field(default_factory=list)
     degraded_alerts: list[DegradedAlert] = Field(default_factory=list)
+
+
+# ------------------------------------------------------------------ 结构 2：顺路取顺序（17 §10.2）
+
+class PickPathItem(BaseModel):
+    """顺路取序列里的一条巷道（17 §10.2 的 `pick_sequence` 元素形）。
+
+    也是 `ConfirmItem.pick_path` 的元素（`app/schemas/job.py` 引用它）—— 巷道号按 2 位
+    文本（库位号 `[:2]`），前导 0 不得丢（CLAUDE.md §七）。
+    """
+
+    aisle: str = Field(min_length=2, max_length=2)
+    #: 该巷拣货量（= 现状库存量，`derive_pick_sequence` 不跨巷分配）。
+    qty: int = Field(ge=0)
+    #: 该巷批号集，升序（确定性）。
+    batches: list[str] = Field(default_factory=list)
+
+
+class PickSequence(BaseModel):
+    """一条 DO 的顺路取顺序（17 §10.2）：`do_no` / `pick_sequence` /
+    `weighted_concentration` / `threshold_n` / `exceeded`。
+
+    加 `snapshot_version` 簿记字段（design.md D3：本方案基于的库存视图版本，随方案
+    版本化）—— 只加不删，17 §10.2 的消费方忽略未知键。它同时是
+    `RecommendationPlan.payload_json` 的形状与响应 `plans[]` 元素的基形。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    do_no: str = Field(min_length=1)
+    pick_sequence: list[PickPathItem] = Field(default_factory=list)
+    #: 拣货量加权集中度 = 80% 降序累加所覆盖的巷道数（`concentration_aisle_count`）。
+    weighted_concentration: int = Field(ge=0)
+    threshold_n: int = Field(ge=1)
+    #: `weighted_concentration > threshold_n`，仅高亮不阻断（15-03 §6.2）。
+    exceeded: bool
+    snapshot_version: str = Field(pattern=_SNAPSHOT_VERSION_PATTERN)
+
+
+class PickPlanItem(PickSequence):
+    """响应 `plans[]` 里的一条方案：`PickSequence` + 对应回请求的作业单与方案行。
+
+    `job_order_id` / `plan_id` 是响应侧标识（对齐 `PlanItem`），**不进 payload_json**
+    —— 方案归属是 `RecommendationPlan` 的列，不是 17 §10.2 的内容。
+    """
+
+    job_order_id: str = Field(min_length=1)
+    plan_id: int
+
+
+class BatchPickSequenceRequest(BaseModel):
+    """`POST /api/job/batch/pick-sequence` 的请求体（D2）。
+
+    与 `BatchAllocateRequest` 同一形态：`job_order_ids` 必填非空、`snapshot_version`
+    是调用方声明（不是筛选器）。上限 `MAX_JOB_ORDERS_PER_BATCH` 只作常量、判在路由层。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    warehouse_id: str = Field(min_length=1, max_length=32)
+    snapshot_version: str | None = Field(default=None, pattern=_SNAPSHOT_VERSION_PATTERN)
+    job_order_ids: list[str]
+
+
+class BatchPickSequenceResponse(BaseModel):
+    """`POST /api/job/batch/pick-sequence` 的响应体（D2：分列 `plans[]` + `not_in_stock[]`）。
+
+    `not_in_stock[]` = 货未入库、无法生成顺路取的单（提示「该品项尚未入库，暂无法生成
+    顺路取」，不阻断，单停留 `PENDING`）。
+    """
+
+    bulk_batch_no: str = Field(min_length=1)
+    snapshot_version: str = Field(pattern=_SNAPSHOT_VERSION_PATTERN)
+    plans: list[PickPlanItem] = Field(default_factory=list)
+    not_in_stock: list[str] = Field(default_factory=list)

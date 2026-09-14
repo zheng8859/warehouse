@@ -84,6 +84,10 @@ def void_job(
                 target_location_code=normal.target_location_code,
                 operator_id=operator_id,
                 executed_at=voided_at,
+                # 反向行照抄原行的拣货路径 —— 出库按 `pick_path_json` 逐巷扣减（D7），
+                # 冲正回补也必须按同一份巷道级路径取反，否则反向行 source/pick_path 双空，
+                # `apply_increment` 无从回补。
+                pick_path_json=normal.pick_path_json,
                 is_reversal=True,
             )
             apply_increment(session, ledger=reverse, snapshot=snapshot)

@@ -233,27 +233,36 @@ def verify_relocate(
 # ------------------------------------------------------------------ 编排层（会话 + 落库）
 
 def _pick_qty_from_ledger(session: Session, job_order: JobOrder) -> dict[str, int]:
-    """出库的拣货分布：从**该单自己的台账行**取（源库位一条 = 一个巷道）。
+    """出库的拣货分布：优先从该单台账的 `pick_path_json`（`pick_sequence[]`）按 `aisle` 聚合
+    `qty` → `{aisle: qty}`；`pick_path_json` 缺失/空回退 `source_location_code`（单巷，兼容
+    无拣货路径的历史单源出库单，D5）。
 
-    v1 的确认是**逐单**的（一张作业单 = 一张 DO 的一行 = 一个源库位），故单行的加权集中度
-    恒为 1 —— 这不是 bug，是粒度：80%≤N 的「80%」只有跨**一张 DO 的多行**累计才有意义，
-    那张 DO 的聚合属批量确认 / KPI 层（6.1 / 阶段六），不在这里。这里把「这条单拣在哪」
-    如实地记成一条巷道，让后验至少可落、可查。
-
-    台账缺失源库位（数据自相矛盾）时抛 `ValidationBlocked` → 编排迁 `VERIFY_FAILED`，
-    不静默 PASS。
+    出库确认记录的拣货路径是**巷道粒度**（D7）：一份路径通常跨多条巷道，逐单的加权集中度
+    因此真正按「80% 拣货量落到几条巷道」算（`verify_outbound`）；单源回退那条恒为 1（历史行）。
+    台账既无拣货路径又无源库位（数据自相矛盾）时抛 `ValidationBlocked` → 编排迁
+    `VERIFY_FAILED`，不静默 PASS。
     """
     ledger = session.scalars(
         sa.select(Ledger).where(
             Ledger.job_order_id == job_order.id, Ledger.is_reversal.is_(False)
         )
     ).first()
-    if ledger is None or ledger.source_location_code is None:
+    if ledger is None:
         raise ValidationBlocked(
-            "出库台账缺失源库位——加权集中度无从计算，不得当作达标",
+            "出库台账缺失——加权集中度无从计算，不得当作达标",
             detail={"job_order_id": job_order.id},
         )
-    return {aisle_of(ledger.source_location_code): ledger.qty}
+    if ledger.pick_path_json:
+        by_aisle: dict[str, int] = {}
+        for entry in ledger.pick_path_json:
+            by_aisle[entry["aisle"]] = by_aisle.get(entry["aisle"], 0) + entry["qty"]
+        return by_aisle
+    if ledger.source_location_code is not None:
+        return {aisle_of(ledger.source_location_code): ledger.qty}
+    raise ValidationBlocked(
+        "出库台账既无拣货路径又无源库位——加权集中度无从计算，不得当作达标",
+        detail={"job_order_id": job_order.id},
+    )
 
 
 def _compute_metrics(

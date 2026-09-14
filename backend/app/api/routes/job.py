@@ -51,12 +51,23 @@ import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from app.api.deps import current_account, get_db
+from app.api.deps import current_account, get_db, require_permission
+from app.api.permissions import Permission
+from app.core.concurrency import bump_lock_version
 from app.core.enums import AbcClass, JobStatus, JobType
-from app.core.errors import StateConflict, ValidationBlocked
+from app.core.errors import BlockedMissingPrerequisite, StateConflict, ValidationBlocked
 from app.core.state_machine import assert_transition
+from app.engine.factors import load_snapshot_index
+from app.engine.reasons import load_bulk_batch_nos, next_bulk_batch_no
 from app.models.identity import Account
-from app.models.job import DeviationStatus, JobOrder, Ledger, RecommendationPlan, Verification
+from app.models.job import (
+    DeviationStatus,
+    JobOrder,
+    Ledger,
+    PlanKind,
+    RecommendationPlan,
+    Verification,
+)
 from app.models.linkage import Snapshot
 from app.schemas.job import (
     BatchConfirmRequest,
@@ -72,9 +83,15 @@ from app.schemas.job import (
     VerificationItem,
     VoidRequest,
 )
+from app.schemas.reason import (
+    MAX_JOB_ORDERS_PER_BATCH,
+    BatchPickSequenceRequest,
+    BatchPickSequenceResponse,
+    PickPlanItem,
+)
 from app.services import kpi
 from app.services.inbound import confirm_inbound
-from app.services.outbound import confirm_outbound
+from app.services.outbound import confirm_outbound, derive_pick_sequence
 from app.services.relocate import confirm_relocate
 from app.services.verify import run_verification
 from app.services.void import void_job
@@ -179,17 +196,98 @@ def _current_snapshot_or_none(session: Session, *, warehouse_id: str) -> Snapsho
     ).first()
 
 
+def _require_batch_size(raw_ids: Sequence[str]) -> None:
+    """单次批量顺路取的单据数上限（`MAX_JOB_ORDERS_PER_BATCH`，design.md D2）。
+
+    与 `allocate._require_batch_size` 同一原则：判在报文层 422、提示拆分、不截断 ——
+    理由见那个函数（领域错误统一走 `errors.error_body`、截断会让调用方以为超出的也派生了）。
+    """
+    submitted = len(raw_ids)
+    if submitted <= MAX_JOB_ORDERS_PER_BATCH:
+        return
+    raise ValidationBlocked(
+        f"本批提交了 {submitted} 条单据，超过单次上限 {MAX_JOB_ORDERS_PER_BATCH} 单 ——"
+        f"请拆分为每批不超过 {MAX_JOB_ORDERS_PER_BATCH} 单后分批提交；"
+        "端点不截断到上限继续执行",
+        detail={"submitted": submitted, "max": MAX_JOB_ORDERS_PER_BATCH},
+    )
+
+
+def _require_outbound(orders: Sequence[JobOrder]) -> None:
+    """本批必须**全是出库单**，否则整批 422（design.md D2 第 1 条）。
+
+    顺路取只对 `OUTBOUND` 有意义；混进一张入库/移库单说明调用方把队列选错了，整批拒绝
+    而不是逐单跳过 —— 跳过会把「选错类型」记成一次「只有部分单生成了顺路取」的正常结果。
+    """
+    offenders = sorted(
+        str(order.id) for order in orders if order.job_type is not JobType.OUTBOUND
+    )
+    if offenders:
+        raise ValidationBlocked(
+            f"本批有 {len(offenders)} 张单不是出库单：{offenders} —— 顺路取只处理 OUTBOUND",
+            detail={"not_outbound": offenders, "expected": JobType.OUTBOUND.value},
+        )
+
+
+def _require_derivable(orders: Sequence[JobOrder]) -> None:
+    """本批必须整批处于 `PENDING` 或 `PLANNED`，否则整体拒绝（design.md D3）。
+
+    `PENDING` 首次派生、`PLANNED` 幂等命中/视图推进重新派生；其余状态（已确认 / 已驳回 /
+    已执行等）不该再派生，整批 409 —— 与 `allocate._require_pending` 同一理由：跳过会
+    把状态错记成「部分成功」。
+    """
+    offenders = sorted(
+        (
+            {"job_order_id": str(order.id), "status": order.status.value}
+            for order in orders
+            if order.status not in (JobStatus.PENDING, JobStatus.PLANNED)
+        ),
+        key=lambda item: int(item["job_order_id"]),
+    )
+    if offenders:
+        listed = "、".join(f"{item['job_order_id']}（{item['status']}）" for item in offenders)
+        raise StateConflict(
+            f"本批有 {len(offenders)} 张单不处于 {JobStatus.PENDING.value}/{JobStatus.PLANNED.value}："
+            f"{listed} —— 顺路取只派生待派生/已派生的单，整批拒绝",
+            detail={"not_derivable": offenders},
+        )
+
+
+def _render_snapshot_version(snapshot: Snapshot) -> str:
+    """`snapshot_version` = `snapshot_time` 的 `"%Y-%m-%dT%H:%M"` 渲染（D2，同 allocate D10）。"""
+    return snapshot.snapshot_time.strftime("%Y-%m-%dT%H:%M")
+
+
+def _current_pick_plan(session: Session, *, order: JobOrder) -> RecommendationPlan | None:
+    """该单「当前方案」= `plan_kind=PICK` 且 `id` 最大的一行（D3；无则 `None`）。
+
+    `RecommendationPlan.job_order_id` 不唯一（多次派生追加行），当前方案不加指针列，
+    取 `id` 最大者 —— 与 `allocate` 对配置版本「取 `version_no` 最大」同一手法。
+    """
+    return session.scalars(
+        sa.select(RecommendationPlan)
+        .where(
+            RecommendationPlan.job_order_id == order.id,
+            RecommendationPlan.plan_kind == PlanKind.PICK,
+        )
+        .order_by(RecommendationPlan.id.desc())
+        .limit(1)
+    ).first()
+
+
 def _require_locations(order: JobOrder, item: ConfirmItem) -> None:
     """按 `job_type` 校验库位字段的填法（`17` §4.3 台账矩阵）。
 
-    入库只目标、出库只源、移库两者都有。**判在报文层**：DB 的 `_LEDGER_LOCATION_CHECK`
-    会把「填错哪一格」拦成 `IntegrityError`（500），而这是调用方的报文错，应 422。
+    入库只目标、出库「目标必空、源可空」（多巷无单一源库位，拣货路径走 `pick_path`，D4）、
+    移库两者都有。**判在报文层**：DB 的 `_LEDGER_LOCATION_CHECK` 会把「填错哪一格」拦成
+    `IntegrityError`（500），而这是调用方的报文错，应 422。`pick_path` 的缺失不在这里判 ——
+    由确认编排读该单当前方案回退（D4）。
     """
     source = item.source_location_code
     target = item.target_location_code
     required = {
         JobType.INBOUND: ("target", source is None and target is not None),
-        JobType.OUTBOUND: ("source", source is not None and target is None),
+        JobType.OUTBOUND: ("目标为空", target is None),
         JobType.RELOCATE: ("both", source is not None and target is not None),
     }[order.job_type]
     label, ok = required
@@ -197,8 +295,8 @@ def _require_locations(order: JobOrder, item: ConfirmItem) -> None:
         return
     raise ValidationBlocked(
         f"作业单 #{order.id}（{order.job_type.value}）的库位字段填法不合法 —— "
-        f"入库只填 target、出库只填 source、移库两者都填（当前 source={source!r}、"
-        f"target={target!r}）",
+        f"入库只填 target、出库 target 必空（源可空、拣货路径走 pick_path）、移库两者都填"
+        f"（当前 source={source!r}、target={target!r}）",
         detail={"job_order_id": str(order.id), "job_type": order.job_type.value},
     )
 
@@ -230,10 +328,16 @@ def _confirm_one(
             job_order=order,
             operator_id=operator_id,
             executed_at=executed_at,
-            source_location_code=item.source_location_code,
+            source_location_code=None,
             actual_qty=item.actual_qty,
             snapshot=snapshot,
             lock_version=item.lock_version,
+            # pick_path 是 Pydantic `PickPathItem` 列表，台账要的是 JSON 形状（D4）。
+            pick_path_json=(
+                [entry.model_dump() for entry in item.pick_path]
+                if item.pick_path is not None
+                else None
+            ),
         )
     return confirm_relocate(
         session,
@@ -306,6 +410,129 @@ def batch_confirm(
         )
 
     return BatchConfirmResponse(results=results)
+
+
+@router.post("/batch/pick-sequence", response_model=BatchPickSequenceResponse)
+def batch_pick_sequence(
+    payload: BatchPickSequenceRequest,
+    session: Session = Depends(get_db),
+    _authorized: None = Depends(require_permission(Permission.OUTBOUND_OPERATE)),
+) -> BatchPickSequenceResponse:
+    """批量顺路取派生（design.md D2 / D3）：对一组 `OUTBOUND` 单按巷道聚合既有库存，
+    产出拣货顺序 + 加权集中度，写 `RecommendationPlan(plan_kind=PICK)` 并迁 `PLANNED`。
+
+    **只读派生**：不调 `engine.invoke`、不重新决定落位、不写台账/库存（D1）。步骤与失败面：
+
+    1. **报文 → id**：上限 / 形状 / 重号 / 不存在 / 非出库单 ⇒ 整批 422，零写入。
+    2. **状态**：有单不在 `PENDING`/`PLANNED` ⇒ 整批 409（D3 只派生这两种源状态）。
+    3. **快照**：无快照 ⇒ 409（`BlockedMissingPrerequisite`，提示重新导入，不猜测）。
+    4. **逐单派生**（D3 幂等键 = `bulk_batch_no` × 库存视图版本）：
+       - `PENDING`：`profile.plates_by_aisle` 空 → 分列 `not_in_stock`（货未入库，停留
+         `PENDING`，不阻断）；否则派生、写方案、迁 `PLANNED`、回写 `bulk_batch_no`。
+       - `PLANNED`：读「当前方案」（`id` 最大的 `PICK` 行）—— 同版本返既有（幂等命中，
+         不重复写、不重迁）；异版本（或无方案）重新派生并**追加**一行新方案（`id` 更大，
+         天然成为当前方案），不重迁状态。
+    5. **整批一次提交**（与 `allocate` 同口径）：纯派生 + 写方案，无台账/库存写，不存在
+       「一半有方案一半没有」的中间态。
+    """
+    now = datetime.now()
+
+    # 1~3. 报文级校验 + 状态 + 快照，全是整批拒绝（见 docstring）。
+    _require_batch_size(payload.job_order_ids)
+    ids = _parse_ids(payload.job_order_ids)
+    orders_by_id = _load_orders(session, warehouse_id=payload.warehouse_id, ids=ids)
+    orders = [orders_by_id[value] for value in ids]
+    _require_outbound(orders)
+    _require_derivable(orders)
+
+    snapshot = _current_snapshot_or_none(session, warehouse_id=payload.warehouse_id)
+    if snapshot is None:
+        raise BlockedMissingPrerequisite(
+            f"仓库 {payload.warehouse_id} 没有任何快照基线 —— 阻断本次顺路取派生，不产出方案："
+            "请先导入库存快照（顺路取按库存视图聚合，无快照即无分布可读）"
+        )
+    snapshot_version = _render_snapshot_version(snapshot)
+    if payload.snapshot_version is not None and payload.snapshot_version != snapshot_version:
+        raise StateConflict(
+            f"声明的快照版本 {payload.snapshot_version} 不是本次实际使用的那一版"
+            f"（{snapshot_version}，快照 #{snapshot.id}）—— 请重新读取当前快照后再提交",
+            detail={"declared": payload.snapshot_version, "actual": snapshot_version},
+        )
+
+    index = load_snapshot_index(session, snapshot_id=snapshot.id)
+    bulk_batch_no = next_bulk_batch_no(
+        load_bulk_batch_nos(session, warehouse_id=payload.warehouse_id, now=now), now=now
+    )
+
+    # 4. 逐单派生（请求序）。纯派生 + 写方案，`now` 取一次；`bulk_batch_no` 只回写
+    #    本批真正迁 `PLANNED` 的单。
+    plans: list[PickPlanItem] = []
+    not_in_stock: list[str] = []
+    for order in orders:
+        profile = index.profile(order.material_code)
+
+        if order.status is JobStatus.PLANNED:
+            current = _current_pick_plan(session, order=order)
+            if current is not None and current.payload_json.get("snapshot_version") == snapshot_version:
+                # 幂等命中：同版本返既有方案，不重复写、不重迁状态（D3）。
+                plans.append(
+                    PickPlanItem(
+                        job_order_id=str(order.id),
+                        plan_id=current.id,
+                        **current.payload_json,
+                    )
+                )
+                continue
+            # 视图推进（或无方案）：追加一行新方案，不重迁状态（已 PLANNED）。
+            result = derive_pick_sequence(
+                material_code=order.material_code, do_no=order.order_no, profile=profile
+            )
+            payload_json = {**result, "snapshot_version": snapshot_version}
+            row = RecommendationPlan(
+                warehouse_id=order.warehouse_id,
+                job_order_id=order.id,
+                plan_kind=PlanKind.PICK,
+                payload_json=payload_json,
+            )
+            session.add(row)
+            session.flush()
+            plans.append(
+                PickPlanItem(job_order_id=str(order.id), plan_id=row.id, **payload_json)
+            )
+            continue
+
+        # PENDING：货未入库分列 not_in_stock（停留 PENDING，不阻断）；否则派生 + 迁 PLANNED。
+        if not profile.plates_by_aisle:
+            not_in_stock.append(str(order.id))
+            continue
+        result = derive_pick_sequence(
+            material_code=order.material_code, do_no=order.order_no, profile=profile
+        )
+        payload_json = {**result, "snapshot_version": snapshot_version}
+        row = RecommendationPlan(
+            warehouse_id=order.warehouse_id,
+            job_order_id=order.id,
+            plan_kind=PlanKind.PICK,
+            payload_json=payload_json,
+        )
+        session.add(row)
+        session.flush()
+        order.bulk_batch_no = bulk_batch_no
+        order.status = assert_transition(order.status, JobStatus.PLANNED)
+        bump_lock_version(order, expected=order.lock_version)
+        plans.append(
+            PickPlanItem(job_order_id=str(order.id), plan_id=row.id, **payload_json)
+        )
+
+    # 5. 整批一次提交（与 `allocate` 同口径）。
+    session.commit()
+
+    return BatchPickSequenceResponse(
+        bulk_batch_no=bulk_batch_no,
+        snapshot_version=snapshot_version,
+        plans=plans,
+        not_in_stock=not_in_stock,
+    )
 
 
 @router.post("/{job_id}/reject", response_model=JobStatusResponse)

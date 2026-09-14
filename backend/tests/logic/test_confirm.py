@@ -158,7 +158,7 @@ def test_confirm_inbound_uses_actual_qty_in_ledger(session: Session) -> None:
 
 
 def test_confirm_outbound_success(session: Session) -> None:
-    """出库确认：有源无目标台账 + 源库位 cap 减量。"""
+    """出库确认：按拣货路径出库，台账记 `pick_path_json`（无源无目标）+ 逐巷 cap 减量。"""
     operator = _operator(session)
     scenario = make_scenario(
         session,
@@ -183,16 +183,17 @@ def test_confirm_outbound_success(session: Session) -> None:
         job_order=order,
         operator_id=operator.id,
         executed_at=NOW,
-        source_location_code="010104",
+        pick_path_json=[{"aisle": "01", "qty": 40, "batches": [BATCH]}],
         snapshot=scenario.snapshot,
     )
 
     assert order.status is JobStatus.VERIFIED
-    assert order.actual_location_code == "010104"
+    assert order.actual_location_code is None
     ledger = _ledgers(session, order)[0]
     assert ledger.ledger_type is LedgerType.OUTBOUND
-    assert ledger.source_location_code == "010104"
+    assert ledger.source_location_code is None
     assert ledger.target_location_code is None
+    assert ledger.pick_path_json == [{"aisle": "01", "qty": 40, "batches": [BATCH]}]
     assert _qty_at(session, scenario.snapshot.id, "010104") == 10
 
 

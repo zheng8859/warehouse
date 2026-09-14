@@ -217,7 +217,7 @@ def test_verify_failed_retries_to_verified(session: Session) -> None:
 # ------------------------------------------------------------------ 出库 / 移库单条指标
 
 def test_confirm_outbound_verifies_concentration(session: Session) -> None:
-    """出库确认 → `VERIFIED`，一条「拣货量加权集中度」指标（v1 逐单粒度恒 1 → PASS）。"""
+    """出库确认 → `VERIFIED`，一条「拣货量加权集中度」指标（单巷 → 恒 1 → PASS）。"""
     operator = _operator(session)
     scenario = make_scenario(
         session,
@@ -244,7 +244,7 @@ def test_confirm_outbound_verifies_concentration(session: Session) -> None:
         job_order=order,
         operator_id=operator.id,
         executed_at=NOW,
-        source_location_code="010104",
+        pick_path_json=[{"aisle": "01", "qty": 40, "batches": [BATCH]}],
         snapshot=scenario.snapshot,
     )
 

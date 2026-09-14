@@ -11,7 +11,8 @@
 `AisleCap` 是「快照时刻的冻结值」（`app/models/linkage.py` 的类 docstring 明写
 「事务内增量不落本表」）—— `cap_total` 等三列在快照导入时全量重算，事务不该改写它。
 本阶段 cap 增量的**物质化载体是 `InventoryItem`（库存分布）**：入库在目标库位增库存、
-出库在源库位减库存、移库源减目标增，冲正反向。台账仍是「为什么库存变了」的唯一来源。
+出库按拣货路径逐巷减库存（回退单源）、移库源减目标增，冲正反向。台账仍是「为什么库存
+变了」的唯一来源。
 
 「已占格数」随库存分布增减而隐式变化（`cap_total = 总格数 − 已占格数` 是**导出值**，
 由 4b 的全量重算 / 对账在快照层固化），本函数不写 `AisleCap` 三列。
@@ -131,13 +132,117 @@ def _mutate(
             item.qty = remaining
 
 
+def _aisle_items(
+    session: Session,
+    *,
+    snapshot: Snapshot,
+    aisle: str,
+    material_code: str,
+) -> list[InventoryItem]:
+    """该巷道、该料号的库存行，按库位号升序（同库位按批号升序）—— 确定性分配。"""
+    return list(
+        session.scalars(
+            sa.select(InventoryItem)
+            .where(
+                InventoryItem.snapshot_id == snapshot.id,
+                InventoryItem.location_code.like(f"{aisle}%"),
+                InventoryItem.material_code == material_code,
+            )
+            .order_by(InventoryItem.location_code, InventoryItem.batch_no)
+        )
+    )
+
+
+def _mutate_aisle(
+    session: Session,
+    *,
+    snapshot: Snapshot,
+    aisle: str,
+    material_code: str,
+    delta: int,
+) -> None:
+    """在巷道 `aisle` 上对库存总量施加 `delta`（正增负减）。
+
+    - `delta < 0`（出库扣减）：按库位号升序逐行递减至扣完；减到 0 删行；减穿（巷内总量
+      不足）→ `ValidationBlocked`。批号不参与过滤 —— 拣货路径的 `batches` 是派生时刻该巷
+      的批号全集，与巷内现状一致，按巷道总量扣即可（D7 粒度说明：消费方都按 `[:2]` 聚合）。
+    - `delta > 0`（冲正回补）：加回到巷内首行（库位号升序）；巷内已无行（正向扣减删空）
+      → `ValidationBlocked` —— 巷道级回补无从知道被删库位的确切位置，宁可响亮失败也不
+      编造一个库位。
+    """
+    items = _aisle_items(
+        session, snapshot=snapshot, aisle=aisle, material_code=material_code
+    )
+    if delta < 0:
+        remaining = -delta
+        for item in items:
+            if remaining <= 0:
+                break
+            take = min(item.qty, remaining)
+            item.qty -= take
+            remaining -= take
+        if remaining > 0:
+            raise ValidationBlocked(
+                f"巷道 {aisle} 的 {material_code} 现有总量不足以扣减 {-delta} —— "
+                "拣货路径与库存视图对不上，增量会导致负库存",
+                detail={"aisle": aisle, "material_code": material_code, "delta": delta},
+            )
+        for item in items:
+            if item.qty == 0:
+                session.delete(item)
+    else:  # delta > 0
+        if not items:
+            raise ValidationBlocked(
+                f"巷道 {aisle} 的 {material_code} 已无库存行，无法回补 {delta} —— "
+                "正向扣减删空了该巷道，巷道级回补无从恢复逐库位明细",
+                detail={"aisle": aisle, "material_code": material_code, "delta": delta},
+            )
+        items[0].qty += delta
+
+
+def _apply_outbound(
+    session: Session, *, ledger: Ledger, snapshot: Snapshot, sign: int
+) -> None:
+    """出库扣减：优先按 `pick_path_json` 逐巷扣减，回退 `source_location_code` 单巷。
+
+    拣货路径是**巷道级**（`17` §10.2 的 `aisle`），`InventoryItem` 是**库位级** —— 扣减只要
+    在巷道总量上正确（D7 粒度说明），故按巷道聚合扣，不引入库位级业务语义。两者皆无
+    （既无拣货路径也无源库位）→ `ValidationBlocked`（不静默）。
+    """
+    if ledger.pick_path_json:
+        for entry in ledger.pick_path_json:
+            _mutate_aisle(
+                session,
+                snapshot=snapshot,
+                aisle=entry["aisle"],
+                material_code=ledger.material_code,
+                delta=-to_occupied_cells(entry["qty"]) * sign,
+            )
+    elif ledger.source_location_code is not None:
+        _mutate(
+            session,
+            snapshot=snapshot,
+            location_code=ledger.source_location_code,
+            batch_no=ledger.batch_no,
+            material_code=ledger.material_code,
+            material_name=ledger.material_name,
+            delta=-to_occupied_cells(ledger.qty) * sign,
+        )
+    else:
+        raise ValidationBlocked(
+            f"出库台账 #{ledger.id} 既无拣货路径（pick_path_json）也无源库位 —— "
+            "无法定位扣减，属数据自相矛盾",
+            detail={"ledger_id": ledger.id},
+        )
+
+
 def apply_increment(session: Session, *, ledger: Ledger, snapshot: Snapshot | None) -> None:
     """把一条台账行的 cap / 库存分布增量落到 `InventoryItem`，与台账同事务。
 
     三类口径（`is_reversal` 反向行时方向取反，`sign = -1`）：
 
     - 入库（INBOUND）：目标库位 `+cells`
-    - 出库（OUTBOUND）：源库位 `-cells`
+    - 出库（OUTBOUND）：按 `pick_path_json` 逐巷 `-cells`（回退 `source_location_code` 单巷）
     - 移库（RELOCATE）：源库位 `-cells`、目标库位 `+cells`
 
     `cells = to_occupied_cells(ledger.qty)`（板-格换算单一来源，本阶段恒等）。
@@ -167,16 +272,7 @@ def apply_increment(session: Session, *, ledger: Ledger, snapshot: Snapshot | No
             delta=cells * sign,
         )
     elif ledger.ledger_type is LedgerType.OUTBOUND:
-        assert source is not None
-        _mutate(
-            session,
-            snapshot=snapshot,
-            location_code=source,
-            batch_no=ledger.batch_no,
-            material_code=ledger.material_code,
-            material_name=ledger.material_name,
-            delta=-cells * sign,
-        )
+        _apply_outbound(session, ledger=ledger, snapshot=snapshot, sign=sign)
     else:  # RELOCATE
         assert source is not None and target is not None
         _mutate(

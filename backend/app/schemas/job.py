@@ -24,6 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.core.enums import AbcClass, JobStatus, LedgerType, VerifyResult
 from app.models.job import DeviationCauseKind, DeviationStatus
+from app.schemas.reason import PickPathItem
 
 #: 库位号一律 6 位文本（CLAUDE.md §七）。可空字段不给即「不提供」，给了就得 6 位 ——
 #: 与 DB 的 `_LOCATION_LEN` 同一口径，报文层先拦，避免 500。
@@ -43,6 +44,9 @@ class ConfirmItem(BaseModel):
     job_order_id: str = Field(min_length=1)
     source_location_code: str | None = _LOCATION_CODE
     target_location_code: str | None = _LOCATION_CODE
+    #: 出库最终拣货路径（巷道序，`17` §10.2 的 `pick_sequence` 元素形）。可空 = 未微调，
+    #: 编排读该单当前方案的 `pick_sequence` 回退（D4）。
+    pick_path: list[PickPathItem] | None = None
     #: 实际执行数量。可空 = 取作业单上的计划量（`confirm._confirm_and_execute` 的默认）。
     actual_qty: int | None = Field(default=None, ge=1)
     #: 乐观锁版本号（spec `data-model`「并发确认仅一方成功」）：调用方**读的时候**看到的
