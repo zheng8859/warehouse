@@ -36,6 +36,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import Settings
 from app.core.enums import JobType
+from app.engine.scoring import load_weights
 from app.llm import DegradedReason, client
 from app.llm.client import Backend
 from app.llm.quota import (
@@ -47,9 +48,16 @@ from app.llm.quota import (
     record_tokens,
 )
 from app.llm.redact import redact
+from app.models.configuration import Capability
 from app.models.job import Deviation, DeviationCauseKind, JobOrder, RecommendationPlan
+from app.models.llm import AiSuggestion, AiSuggestionStatus
 from app.models.linkage import InventoryItem, Snapshot
 from app.services.kpi import same_material_cross_aisle_mean
+from app.services.weight_tune import (
+    MIN_WEIGHT_TUNE_SAMPLES,
+    build_counterfactual,
+    load_samples,
+)
 
 
 class ColdPathRejected(Exception):
@@ -400,4 +408,95 @@ def deviation_attribute(
         gate=gate,
         backend=backend,
         timeout_s=timeout_s,
+    )
+
+
+# ---------------------------------------------------------------------------
+# ③ 权重调优（离线，人采纳才生效）—— 反事实模拟规则算 → LLM 叙事，影子模式落建议。
+# ---------------------------------------------------------------------------
+
+
+def weight_tune(
+    session: Session,
+    *,
+    warehouse_id: str,
+    settings: Settings | None = None,
+    period: str | None = None,
+    now: datetime | None = None,
+    gate: ConcurrencyGate | None = None,
+    backend: Backend | None = None,
+    timeout_s: float | None = None,
+) -> DualProduct:
+    """③ 权重调优建议：历史批次反事实模拟（规则算）→ 脱敏 → 网关 → 双产物。**影子模式**。
+
+    门槛（D12）：历史批次样本 < 50 → `insufficient_samples` 降级，**不调 LLM、不落建议**
+    —— 样本太少时反事实模拟的统计没有意义，与其让 LLM 对着噪声编一套「调参理由」，
+    不如诚实降级。
+
+    ≥50 时：反事实表（`build_counterfactual`）算出「提议权重」，先落一张
+    `AiSuggestion(status=PROPOSED)`（影子模式 = 不生效），再走统一链路拿 LLM 叙事。
+    建议的 `context_json` 存的是**规则算的拟采纳权重**，不是 LLM 文本 —— `weight/apply`
+    正是读它才写 `WeightConfig`（红线 3：采纳规则算的数，LLM 只叙事）。
+
+    `rule` 卡片里补一枚 `suggestion_id` 让 `weight/apply` 定位建议；它不是白名单字段，
+    脱敏时会被剥掉，不进出站提示词。
+    """
+    settings = settings if settings is not None else Settings()
+    period = period if period is not None else datetime.now().strftime("%Y-%m")
+    now = now if now is not None else datetime.now()
+
+    samples = load_samples(session, warehouse_id=warehouse_id)
+    if len(samples) < MIN_WEIGHT_TUNE_SAMPLES:
+        return DualProduct(
+            rule={
+                "metrics": {
+                    "sample_size": len(samples),
+                    "required_sample_size": MIN_WEIGHT_TUNE_SAMPLES,
+                }
+            },
+            ai=None,
+            ai_generated=False,
+            degraded_reason=DegradedReason.INSUFFICIENT_SAMPLES.value,
+        )
+
+    current_weights = load_weights(session, warehouse_id=warehouse_id, now=now)
+    counterfactual = build_counterfactual(
+        samples=samples, current_weights=current_weights
+    )
+    rule: dict[str, Any] = {"metrics": counterfactual}
+
+    # 影子模式：建议先落 PROPOSED（不生效）。context_json = 规则算的拟采纳权重。
+    suggestion = AiSuggestion(
+        warehouse_id=warehouse_id,
+        capability_kind=Capability.WEIGHT_TUNING,
+        suggestion_text="",  # LLM 叙事在 run_cold_path 之后回填。
+        status=AiSuggestionStatus.PROPOSED,
+        context_json={
+            "proposed_weights": counterfactual["proposed_weights"],
+            "current_weights": counterfactual["current_weights"],
+            "sample_size": len(samples),
+        },
+    )
+    session.add(suggestion)
+    session.flush()
+    rule["suggestion_id"] = suggestion.id
+
+    result = run_cold_path(
+        settings=settings,
+        session=session,
+        warehouse_id=warehouse_id,
+        period=period,
+        rule=rule,
+        gate=gate,
+        backend=backend,
+        timeout_s=timeout_s,
+    )
+    # 回填 LLM 叙事（降级时保持空串，建议本身仍可被人工采纳 —— 反事实表是规则算的）。
+    suggestion.suggestion_text = result.ai or ""
+
+    return DualProduct(
+        rule=rule,
+        ai=result.ai,
+        ai_generated=result.ai_generated,
+        degraded_reason=result.degraded_reason,
     )
