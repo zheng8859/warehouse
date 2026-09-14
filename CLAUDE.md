@@ -374,6 +374,15 @@ AI Notice 强制注入（`field_serializer` 挂所有 ai 叙事）；`ai.*` 权�
 `openspec/specs/{ai-assist,data-model,permission}/spec.md` 已由 delta 写入。
 **已合并（`4ad1527`）、已打 `v0.5.0`。**
 
+**前端 Phase B（冷路径 AI 前端接线）已收尾**：变更 `ai-assist-frontend`（纯前端、零构建
+Vanilla，不改后端端点/契约/实体）把四类冷路径能力与对话台统一入口接成可点击交互 —— 对话台 L2
+问句 chip、双产物建议卡（`renderDualProduct`：`rule` 系统结论恒有 + `ai` 琥珀可选 +
+`degraded_reason` 降级说明）、写意图二次确认卡、p6 KPI 解读 / 偏离归因、p7 权重影子建议卡、
+p5 移库多方案对比、AI 开关角色化置灰 + `warehouse_id` 会话上下文；P1–P7 界面精简（删除说明性
+文字）。新增 `backend/tests/frontend/test_frontend_ai_assist.py`（静态断言）。变更已归档
+（2026-09-15），主规格 `openspec/specs/ai-assist-frontend/spec.md`（9 需求 / 17 场景）已由
+delta 写入。**已合并（`9e363ce`）。**
+
 **未完成**：
 
 - `backend/evals/run_evals.py` —— 阶段六实现；现在跑刻意以退出码 3 失败
