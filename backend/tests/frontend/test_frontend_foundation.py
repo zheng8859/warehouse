@@ -111,10 +111,15 @@ def test_role_filter_hooks_present():
     assert "sessionStorage.setItem('role'" in APP_JS
 
 
-def test_login_role_selector_has_four_roles():
-    """登录页角色下拉覆盖 13 §一 四枚举（tasks 2.2）。"""
-    for value in ("admin", "warehouse_keeper", "supervisor", "planner"):
-        assert f'value="{value}"' in LOGIN_HTML, f"登录页缺角色选项 {value}"
+def test_login_wires_real_auth_not_demo_role_selector():
+    """登录接真实认证：无演示角色下拉，app.js 调 /api/auth/login 并存 token/role（tasks 2.2 演进）。"""
+    # 演示角色下拉已移除 —— 角色由账号决定（13 §7.2 / 22 §2.1），不再让用户自选。
+    assert 'id="loginRole"' not in LOGIN_HTML
+    assert 'value="admin"' not in LOGIN_HTML
+    # app.js 走真实登录：调 /api/auth/login，把凭据与会话事实写入会话级存储（13 §8.1）。
+    assert "'/auth/login'" in APP_JS
+    assert "sessionStorage.setItem('token'," in APP_JS
+    assert "sessionStorage.setItem('role'," in APP_JS
 
 
 # ---------- 3. 四态占位 ----------

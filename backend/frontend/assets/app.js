@@ -56,14 +56,14 @@ cNav.forEach(b => b.addEventListener('click', () => {
   document.getElementById(b.dataset.ctab).classList.remove('hidden');
 }));
 
-// 登录失败演示 + 密码可见性切换
+// 登录：接真实认证（13 §7.2 / 22 §2.1）。角色由账号决定，不再用演示下拉；
+// 凭据与会话事实写入会话级存储（13 §8.1：token / role / user_id），登出即清空这几项。
 const loginBtn = document.getElementById('loginBtn');
 const loginErr = document.getElementById('loginErr');
 const loginUser = document.getElementById('loginUser');
 const loginPwd = document.getElementById('loginPwd');
-const loginRole = document.getElementById('loginRole');
 if (loginBtn) {
-  loginBtn.addEventListener('click', () => {
+  loginBtn.addEventListener('click', async () => {
     const u = loginUser.value.trim();
     const p = loginPwd.value.trim();
     if (!u || !p) {
@@ -74,12 +74,23 @@ if (loginBtn) {
       return;
     }
     loginErr.classList.remove('show');
-    sessionStorage.setItem('role', loginRole ? loginRole.value : 'admin');
+    loginUser.classList.remove('err');
+    loginPwd.classList.remove('err');
     loginBtn.textContent = '登录中…';
     loginBtn.disabled = true;
-    setTimeout(() => {
+    try {
+      const data = await window.api('/auth/login', { method: 'POST', body: { username: u, password: p } });
+      sessionStorage.setItem('token', data.access_token);
+      sessionStorage.setItem('role', data.role);
+      sessionStorage.setItem('user_id', String(data.user_id));
       window.location.href = 'data-import.html';
-    }, 600);
+    } catch (e) {
+      loginBtn.textContent = '登录';
+      loginBtn.disabled = false;
+      // 登录失败只有一种说法（13 §6.1 / 22 §2.1）：后端 401 的 message 即「账号或密码错误」。
+      loginErr.textContent = (e && e.body && e.body.message) || '账号或密码错误';
+      loginErr.classList.add('show');
+    }
   });
 }
 const pwdToggle = document.getElementById('pwdToggle');
