@@ -8,11 +8,14 @@
 
 钉住四条口径：
 
-  1. **cap_physical** = 巷道内**去重库位格数**（主数据到位前 = 快照库位去重格数近似，D5）。
-  2. **cap_total = cap_physical − 已占格数**。已占格数本 change 以「有库存的库位去重格数」
-     近似（design.md 风险表；板-格换算 D14 确认后单列修正）。因快照里每个库位 qty > 0，
-     「去重格数」与「有库存去重格数」相等 → 本阶段 cap_total 恒为 0（已知占位，见
-     `aggregate_aisle_caps` docstring）。
+  1. **cap_physical** = 巷道物理总格数，取主数据 `Aisle.total_cells`；主数据缺失时
+     退化为「快照去重库位格数」（D5 近似）。
+  2. **cap_total = cap_physical − 已占格数**。D14 已确认 **1 板 = 1 格**（2026-09-15
+     业务确认）：快照粒度为库位级，已占格数 = 有库存的去重库位数（同库位多批/多料只
+     算 1 格），不按 qty 折算。主数据到位时 cap_total 为真实剩余容量；主数据缺失退化
+     时 physical 与 occupied 相等 → cap_total = 0（「主数据未到位」信号，非真实容量）。
+     主数据里零库存的空巷也出行（occupied=0），否则进不了引擎「主数据 ∩ cap 行」可
+     行集。
   3. **cap_reserved = cap_physical × 40%**（固定预留带，**仅近站台巷道非零**；
      `is_near_station is None` = 未导出 → 按非近站台，reserved = 0，且落 NULL 不当 False）。
   4. **cap_usable = max(cap_total − cap_reserved, 0)**。
@@ -26,10 +29,15 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.cap.baseline import aggregate_aisle_caps, establish_baseline
+from app.cap.baseline import (
+    aggregate_aisle_caps,
+    establish_baseline,
+    recompute_snapshot_caps,
+)
 from app.core.enums import ImportStatus
 from app.core.errors import StateConflict
 from app.models.linkage import AisleCap, ImportSession, InventoryItem, Snapshot
+from app.models.master_data import Aisle
 
 pytestmark = pytest.mark.logic
 
@@ -123,6 +131,71 @@ def test_aggregate_unknown_near_station_reserves_zero_and_keeps_null() -> None:
     assert by_aisle["01"].is_near_station is None
 
 
+def test_aggregate_physical_from_master_gives_real_remaining() -> None:
+    """D14：主数据给 total_cells 时，cap_total = 总格数 − 去重占用库位（不按 qty 折算）。
+
+    巷道 01：主数据 10 格、库存占 3 个去重库位（其中一个库位混料两行仍只算 1 格），
+    近站台 → total=7、reserved=round(10×40%)=4、usable=3。
+    """
+    items = [
+        _item("010104", qty=102),
+        _item("010205", qty=5),                  # 零头箱数不影响格数
+        _item("010206", material_code="M2"),    # 同库位不同料 → 仍只占 1 格
+        _item("010206", material_code="M3"),
+    ]
+    caps = aggregate_aisle_caps(
+        items,
+        warehouse_id=WAREHOUSE,
+        snapshot_id=1,
+        is_near_station={"01": True},
+        physical_cells={"01": 10},
+    )
+    cap = {c.aisle_no: c for c in caps}["01"]
+    assert cap.cap_physical == 10
+    assert cap.cap_total == 7          # 10 − 3 个去重库位
+    assert cap.cap_reserved == 4       # round(10 × 0.40) = 4
+    assert cap.cap_usable == 3         # 7 − 4
+
+
+def test_aggregate_emits_empty_master_aisles_with_zero_occupied() -> None:
+    """主数据里有、快照零库存的空巷必须出行（occupied=0），否则进不了入库候选集。
+
+    引擎可行集 = 主数据 ∩ cap 行（scoring.feasible_aisles）：空巷不出库就永远不会被
+    推荐入库。03 无库存但主数据给 200 格 → physical=200/total=200/reserved 按近站台算。
+    """
+    items = [_item("010104")]
+    caps = aggregate_aisle_caps(
+        items,
+        warehouse_id=WAREHOUSE,
+        snapshot_id=1,
+        is_near_station={"01": False, "03": True},
+        physical_cells={"01": 100, "03": 200},
+    )
+    by_aisle = {c.aisle_no: c for c in caps}
+    assert set(by_aisle) == {"01", "03"}
+    empty = by_aisle["03"]
+    assert empty.cap_physical == 200
+    assert empty.cap_total == 200
+    assert empty.cap_reserved == 80    # 空的近站台巷道仍保留预留带
+    assert empty.cap_usable == 120
+    assert empty.is_near_station is True
+
+
+def test_aggregate_missing_master_falls_back_to_distinct_locations() -> None:
+    """主数据缺该巷（缺键 / None / 非正）→ 退化 physical=去重库位，cap_total=0（D5）。"""
+    items = [_item("010104"), _item("010205")]
+    caps = aggregate_aisle_caps(
+        items,
+        warehouse_id=WAREHOUSE,
+        snapshot_id=1,
+        is_near_station={"01": True},
+        physical_cells={"01": None},
+    )
+    cap = {c.aisle_no: c for c in caps}["01"]
+    assert cap.cap_physical == 2
+    assert cap.cap_total == 0
+
+
 # ------------------------------------------------------------------ 编排：版本与归档
 
 def test_establish_baseline_creates_snapshot_and_caps(session: Session) -> None:
@@ -203,3 +276,89 @@ def test_establish_baseline_failure_rolls_back_whole_batch(session: Session) -> 
     assert session.scalars(select(Snapshot)).all() == []
     assert session.scalars(select(AisleCap)).all() == []
     assert row.status is ImportStatus.IMPORTED
+
+
+def test_establish_baseline_reads_aisle_master(session: Session) -> None:
+    """生产路径：execute 不传映射时，physical / near 全部从 `Aisle` 主数据读。
+
+    主数据含一条本快照零库存的空巷 03 → cap 行必须出现，且 01/02 的 cap_total 按
+    权威总格数算出真实剩余（不再恒 0）。
+    """
+    session.add_all(
+        [
+            Aisle(warehouse_id=WAREHOUSE, aisle_no="01", total_cells=100,
+                  is_near_station=True),
+            Aisle(warehouse_id=WAREHOUSE, aisle_no="02", total_cells=200,
+                  is_near_station=False),
+            Aisle(warehouse_id=WAREHOUSE, aisle_no="03", total_cells=200,
+                  is_near_station=False),
+        ]
+    )
+    session.flush()
+    row = _imported_session(session)
+    snapshot = establish_baseline(
+        session,
+        import_session=row,
+        items=[_item("010104"), _item("010205"), _item("020101")],
+    )
+
+    caps = {
+        c.aisle_no: c
+        for c in session.scalars(
+            select(AisleCap).where(AisleCap.snapshot_id == snapshot.id)
+        )
+    }
+    assert set(caps) == {"01", "02", "03"}          # 空巷 03 也出行
+    assert caps["01"].cap_physical == 100
+    assert caps["01"].cap_total == 98               # 100 − 2 占用
+    assert caps["01"].cap_reserved == 40            # 近站台 round(100×40%)
+    assert caps["01"].is_near_station is True
+    assert caps["02"].cap_physical == 200
+    assert caps["02"].cap_total == 199
+    assert caps["03"].cap_total == 200              # 零库存空巷
+
+
+def test_recompute_refreshes_caps_from_latest_master(session: Session) -> None:
+    """主数据补齐后对旧快照重算：physical/near 以当前主数据为准，不产生新版本。
+
+    先在**无主数据**下建基线（退化 cap_total=0），再补 Aisle 主数据（含空巷 03），
+    `recompute_snapshot_caps` 后旧快照 cap 拉到权威口径，near 三态也被主数据刷新。
+    """
+    row = _imported_session(session)
+    snapshot = establish_baseline(
+        session,
+        import_session=row,
+        items=[_item("010104"), _item("010205")],
+        is_near_station={},
+        physical_cells={},
+    )
+    before = {
+        c.aisle_no: c
+        for c in session.scalars(select(AisleCap).where(AisleCap.snapshot_id == snapshot.id))
+    }
+    assert before["01"].cap_total == 0
+    assert before["01"].is_near_station is None
+
+    session.add_all(
+        [
+            Aisle(warehouse_id=WAREHOUSE, aisle_no="01", total_cells=100,
+                  is_near_station=True),
+            Aisle(warehouse_id=WAREHOUSE, aisle_no="03", total_cells=200,
+                  is_near_station=False),
+        ]
+    )
+    session.flush()
+
+    recompute_snapshot_caps(session, snapshot=snapshot)
+    session.expire_all()
+    after = {
+        c.aisle_no: c
+        for c in session.scalars(select(AisleCap).where(AisleCap.snapshot_id == snapshot.id))
+    }
+    assert set(after) == {"01", "03"}               # 空巷 03 补出行
+    assert after["01"].cap_physical == 100
+    assert after["01"].cap_total == 98
+    assert after["01"].cap_reserved == 40
+    assert after["01"].is_near_station is True
+    assert after["03"].cap_total == 200
+    assert session.scalars(select(Snapshot)).all() == [snapshot]  # 仍是同一快照

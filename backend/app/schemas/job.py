@@ -24,7 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.core.enums import AbcClass, JobStatus, LedgerType, VerifyResult
 from app.models.job import DeviationCauseKind, DeviationStatus
-from app.schemas.reason import PickPathItem
+from app.schemas.reason import PickPathItem, RelocateSourceLocation
 
 #: 库位号一律 6 位文本（CLAUDE.md §七）。可空字段不给即「不提供」，给了就得 6 位 ——
 #: 与 DB 的 `_LOCATION_LEN` 同一口径，报文层先拦，避免 500。
@@ -44,6 +44,10 @@ class ConfirmItem(BaseModel):
     job_order_id: str = Field(min_length=1)
     source_location_code: str | None = _LOCATION_CODE
     target_location_code: str | None = _LOCATION_CODE
+    #: 移库的逐格真实源库位（`17` §10.3 的 `source_locations`）。可空 = 非移库单；移库单
+    #: 必填非空 —— 取代单一 `source_location_code`，因为散落板跨多个库位，只有一个源库位
+    #: 装不下真实的搬出明细（`_require_locations` 对 RELOCATE 改判本字段非空）。
+    source_locations: list[RelocateSourceLocation] | None = None
     #: 出库最终拣货路径（巷道序，`17` §10.2 的 `pick_sequence` 元素形）。可空 = 未微调，
     #: 编排读该单当前方案的 `pick_sequence` 回退（D4）。
     pick_path: list[PickPathItem] | None = None
@@ -164,23 +168,71 @@ class VerificationItem(BaseModel):
     verify_result: VerifyResult
 
 
+class ScatteredBatchItem(BaseModel):
+    """发起移库识别出的一批散批（同批跨巷道 > 阈值），各自生成一张移库单。
+
+    也是 `DeviationItem.scattered_batches` 的元素（物料级偏离的「明细批次号」）—— 读侧
+    对「这个物料有哪些散批会扇出移库单」补一列，与发起移库的 `scattered_batches` 同口径。
+    """
+
+    batch_no: str
+    cross_aisle: int
+    qty: int
+
+
 class DeviationItem(BaseModel):
     """`GET /api/deviation` 返回的一行偏离批次（移库任务来源，`17` §4.4）。
 
     `material_code` / `batch_no` 至少一个非空（`identifier_required` CHECK），故这里
     各自可空 —— 读侧只透传，不重述那条 DB 约束。`cause_kind` / `status` 是 `str, Enum`
-    （中文取值），序列化即其 `.value`。
+    （中文取值），序列化即其 `.value`。`id` 一并透传 —— 「发起移库」要拿它当路径参数
+    喂 `POST /api/deviation/{id}/start-relocate`。
     """
 
     model_config = ConfigDict(from_attributes=True)
 
+    id: int
     material_code: str | None
+    #: 品名从主数据补齐（`Deviation` 表本身不落品名，读侧展示用）。可空：主数据未建时
+    #: 前端回退显示物料编码。
+    material_name: str | None = None
     batch_no: str | None
+    #: 物料级偏离（`batch_no` 空）的「明细批次号」：该物料在本快照里「同批跨巷道 > 阈值」
+    #: 的散批（与 `start_relocate` 同口径）。批号级偏离为 `None`（批次列已显示本批）。
+    #: 可空：无当前快照时算不出，前端回退「—」。
+    scattered_batches: list[ScatteredBatchItem] | None = None
     actual_cross_aisle: int
     threshold_cross_aisle: int
     cause_kind: DeviationCauseKind
     status: DeviationStatus
     created_at: datetime
+
+
+class StartRelocateRequest(BaseModel):
+    """`POST /api/deviation/{id}/start-relocate` 的请求体：把一条偏离批次物化成一或多张
+    移库单（`Verification → Deviation → JobOrder`，`17` §4.4）。
+
+    「按物料收拢散批」（用户 2026-09-15 确认）：偏离是**物料级**事实（`actual_cross_aisle`
+    = 同物料跨巷道），发起移库时按物料扇出到**每一批跨巷道超阈值的散批**，一散批一移库单。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    warehouse_id: str = Field(min_length=1, max_length=32)
+
+
+class StartRelocateResponse(BaseModel):
+    """`POST /api/deviation/{id}/start-relocate` 的响应体。
+
+    `created_job_order_ids` 沿 `scattered_batches` 序对应（第 i 张单收拢第 i 批散批）；
+    偏离状态迁移为 `已发起移库`，`relocate_job_order_id` 指向第一张单（`17` §4.4 的
+    单数外键 — 物化后的其余单以 `material_code` + `batch_no` 在 `/api/jobs` 可查）。
+    """
+
+    deviation_id: str
+    status: DeviationStatus
+    created_job_order_ids: list[str]
+    scattered_batches: list[ScatteredBatchItem]
 
 
 class JobQueueItem(BaseModel):

@@ -11,10 +11,10 @@
 出库回环跑通一遍。单测里不重复验派生细节（`test_pick_sequence.py` / `test_outbound.py`
 已钉），这里只验「步接得上」：每一段把上一段的产物喂给下一段，最终落在台账 + 后验两处事实。
 
-出库单入队用 `job_api.seed` 模拟 DO 导入的落点（`OUTBOUND` 单 + 库存快照）。不跑真实
-`POST /api/import/*`：文件导入给 `JobOrder.batch_no` 留空（`importer/execute.py` 注释，
-批号由生产批规则在后续生成），而确认链写台账要求 `batch_no` 非空 —— 用 seed 直接摆一张
-带批号的已入队出库单，与移库管线冒烟（`test_relocate_pipeline.py`）同一口径。
+出库单入队用 `job_api.seed` 模拟 DO 导入的落点（`OUTBOUND` 单 + 库存快照），`batch_no`
+**留空** —— 与真实 DO 导入一致（`importer/execute.py` 注释：出库单导入不留批号）。批号由
+顺路取派生回写（FIFO 最早批），确认链写台账读的就是这个非空 `batch_no`，从而钉住
+「导入留空 → 顺路取回写 → 确认写台账」这条真实链路（不绕过、不手摆批号）。
 
 后验取 `PASS` 的现场：M1 全在巷道 01（40 板），顺路取派生单巷 → 集中度 1 ≤ 5 达标。
 """
@@ -58,7 +58,6 @@ def test_outbound_pipeline_end_to_end(job_api: Api) -> None:
                 order_no="DO-20260908-001",
                 material_code=MATERIAL,
                 qty=40,
-                batch_no=BATCH,
                 job_type=JobType.OUTBOUND,
             )
         ],
@@ -82,7 +81,14 @@ def test_outbound_pipeline_end_to_end(job_api: Api) -> None:
     )
     assert pick_resp.status_code == 200
     (plan,) = pick_resp.json()["plans"]
-    assert plan["pick_sequence"] == [{"aisle": "01", "qty": 40, "batches": [BATCH]}]
+    assert plan["pick_sequence"] == [
+        {
+            "aisle": "01",
+            "qty": 40,
+            "batches": [BATCH],
+            "locations": [{"location_code": "010101", "qty": 40, "batch_no": BATCH}],
+        }
+    ]
 
     # 步 3：逐单确认（带 `pick_path`，接受顺路取方案）→ EXECUTED → 后验 → VERIFIED。
     confirm_resp = job_api.client.post(
@@ -97,12 +103,21 @@ def test_outbound_pipeline_end_to_end(job_api: Api) -> None:
     (outcome,) = confirm_resp.json()["results"]
     assert outcome["status"] == JobStatus.VERIFIED.value
 
-    # 步 4：台账（OUTBOUND 无源无目标，拣货路径记 `pick_path_json` 确认值）。
+    # 步 4：台账（OUTBOUND 无源无目标，拣货路径记 `pick_path_json` 确认值；`batch_no` 是
+    # 顺路取回写的 FIFO 最早批，非空可追溯）。
     (ledger,) = job_api.ledgers()
     assert ledger.ledger_type is LedgerType.OUTBOUND
+    assert ledger.batch_no == BATCH
     assert ledger.source_location_code is None
     assert ledger.target_location_code is None
-    assert ledger.pick_path_json == [{"aisle": "01", "qty": 40, "batches": [BATCH]}]
+    assert ledger.pick_path_json == [
+        {
+            "aisle": "01",
+            "qty": 40,
+            "batches": [BATCH],
+            "locations": [{"location_code": "010101", "qty": 40, "batch_no": BATCH}],
+        }
+    ]
 
     # 步 5：后验（拣货量加权集中度 = 1 → PASS）。
     (verification,) = job_api.verifications()

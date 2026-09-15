@@ -714,15 +714,24 @@ def test_the_release_clock_is_the_injected_now_not_a_clock_read_inside(
 # --- 板-格换算（D6） ---------------------------------------------------------
 
 
-def test_the_cell_conversion_is_the_identity_in_this_phase() -> None:
-    """`to_occupied_cells` 本阶段取**恒等**（D6）：一单一位 = 一格 = 一板。
+def test_the_cell_conversion_is_identity_without_master_data() -> None:
+    """`to_occupied_cells` 在 D14 确认后：有 `cartons_per_pallet` 时做箱→格换算，
+    缺失时退化为返回 `qty`（保守过估，物料主数据未导入时的兜底）。
 
-    恒等不是占位符，而是唯一与全部文档算例自洽的读法（`14` §2.2 用板作巷道容量、
-    §3.5 的告警文案也是板）。这里同时钉住「材料参数被收进签名」——换算法则到齐时
-    只改这一个函数体，而**调用方已经把它传进来了**，不必回头改每一处调用。
+    D14（2026-09-15 确认）：1 板 = 1 格，`qty` 单位是箱。每板箱数取
+    `Material.cartons_per_pallet`，格数 = `ceil(qty / cartons_per_pallet)`
+    （不满一板仍占一整格）。主数据缺失时退化为返回 `qty`（一箱一格）——
+    不让"不知道每板几箱"直接判失败，但过估会把可行巷道收紧。
     """
+    # 有每板箱数：箱 → 板 → 格（向上取整）
+    assert to_occupied_cells(10200, cartons_per_pallet=102) == 100   # 整除
+    assert to_occupied_cells(7, cartons_per_pallet=12) == 1            # 不满一板仍占一格
+    assert to_occupied_cells(25, cartons_per_pallet=12) == 3           # 2 板余 1 箱 → 3 格
+
+    # 缺失（None / 非正）：退化为返回 qty（保守过估）
     assert to_occupied_cells(7) == 7
-    assert to_occupied_cells(7, cartons_per_pallet=12) == 7  # 规则未定 ⇒ 参数不影响结果
+    assert to_occupied_cells(7, cartons_per_pallet=None) == 7
+    assert to_occupied_cells(7, cartons_per_pallet=0) == 7
 
 
 # --- 6.2 扣减不落库 · 两次调用逐项相同（D4 + D2） ------------------------------

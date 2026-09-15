@@ -81,7 +81,9 @@ def test_kpi_interpret_entry():
 
 
 def test_deviation_attribution_entry():
-    assert "data-attr" in KPI_HTML
+    # 偏离批次表改为动态渲染（P6 查询修复）：归因入口不再用静态 `data-attr`，
+    # 而是行内 `data-act="attr"` 委托到 `POST /llm/deviation/attribute`。
+    assert 'data-act="attr"' in KPI_HTML
     assert "'/llm/deviation/attribute'" in KPI_HTML
     assert "可能原因" in KPI_HTML
 

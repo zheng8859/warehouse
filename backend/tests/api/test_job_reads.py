@@ -23,6 +23,7 @@ from __future__ import annotations
 import pytest
 
 from app.core.enums import JobStatus, JobType
+from app.models.job import Deviation, DeviationCauseKind, DeviationStatus
 from tests.api.conftest import Api
 from tests.logic.conftest import InventorySpec, JobOrderSpec
 
@@ -201,7 +202,53 @@ def test_deviation_read_lists_deviations(job_api: Api) -> None:
     dev = rows[0]
     assert dev["material_code"] == MATERIAL
     assert dev["batch_no"] == BATCH
+    assert dev["scattered_batches"] is None, "批号级偏离批次列已显本批，明细批次号不重复补"
     assert dev["actual_cross_aisle"] == 6
     assert dev["threshold_cross_aisle"] == 5
     assert dev["cause_kind"] == "新入库收拢不达标"
     assert dev["status"] == "未处理"
+
+
+def test_deviation_read_enriches_material_level_scattered_batches(job_api: Api) -> None:
+    """物料级偏离（批号空）在 `GET /api/deviation` 补齐「明细批次号」`scattered_batches`。
+
+    补数与 `start-relocate` 同口径：该物料在当前快照里「同批跨巷道 > 3」的散批（批号 /
+    跨巷道 / 箱数）。批号 B1 散在 01~04 四条巷道 → 入列；批号 B2 只占两条巷道 → 不入列。
+    """
+    job_api.seed(
+        inventory=[
+            InventorySpec("010101", MATERIAL, "B1", 10),
+            InventorySpec("020101", MATERIAL, "B1", 10),
+            InventorySpec("030101", MATERIAL, "B1", 10),
+            InventorySpec("040101", MATERIAL, "B1", 10),
+            InventorySpec("010102", MATERIAL, "B2", 10),
+            InventorySpec("020102", MATERIAL, "B2", 10),
+        ],
+    )
+    # 物料级偏离 = `batch_no` 留空（成因历史库存拖累，`scan_material_deviations` 的落库形态）。
+    with job_api.factory() as session:
+        session.add(
+            Deviation(
+                warehouse_id=WAREHOUSE,
+                material_code=MATERIAL,
+                batch_no=None,
+                actual_cross_aisle=6,
+                threshold_cross_aisle=5,
+                cause_kind=DeviationCauseKind.LEGACY_INVENTORY_DRAG,
+                status=DeviationStatus.OPEN,
+            )
+        )
+        session.commit()
+
+    response = job_api.client.get(
+        "/api/deviation",
+        params={"warehouse_id": WAREHOUSE},
+        headers=job_api.headers,
+    )
+
+    assert response.status_code == 200
+    (dev,) = response.json()
+    assert dev["batch_no"] is None
+    assert dev["scattered_batches"] == [
+        {"batch_no": "B1", "cross_aisle": 4, "qty": 40},
+    ]

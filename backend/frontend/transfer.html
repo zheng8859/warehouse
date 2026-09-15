@@ -10,8 +10,6 @@
   .confirm-overlay{position:fixed;inset:0;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;z-index:80;}
   .confirm-overlay.hidden{display:none;}
   .confirm-overlay .confirm{background:#fff;box-shadow:0 8px 30px rgba(0,0,0,.25);max-width:420px;width:92%;align-self:center;}
-  .dev-strip{background:var(--amber-soft);border:1px solid var(--amber);padding:8px 12px;margin-bottom:10px;font-size:12px;color:var(--ink);}
-  .dev-strip .tag{display:inline-block;background:var(--amber);color:#fff;padding:1px 8px;border-radius:3px;margin-right:8px;font-size:11px;}
 </style>
 </head>
 <body data-page="p5">
@@ -58,11 +56,8 @@
       <div id="relocateProposeResult" style="margin-top:10px;"></div>
     </div>
 
-    <!-- 偏离批次清单（只读来源，移库任务的依据；来自 GET /api/deviation） -->
-    <div class="dev-strip" id="deviationStrip"><span class="tag">偏离</span><span id="deviationText">偏离批次加载中…</span></div>
-
     <div class="filterbar wide">
-      <input class="f-inp" id="searchOrder" placeholder="搜索物料 / 批次号">
+      <input class="f-inp" id="searchOrder" placeholder="搜索物料号">
       <select class="f-sel" id="abcFilter"><option value="">ABC 全部</option><option value="A">A 类</option><option value="B">B 类</option><option value="C">C 类</option></select>
       <select class="f-sel" id="statusFilter"><option value="">状态 全部</option><option value="PENDING">待确认</option><option value="PLANNED">已规划</option><option value="EXECUTED">已执行</option><option value="REJECTED">已驳回</option></select>
       <button class="btn ghost" id="resetFilter" style="height:30px;padding:0 12px;">重置</button>
@@ -100,7 +95,7 @@
         <div class="batchfoot">
           <span>平均收拢 <b id="avgCross">—</b></span>
           <span class="pill" id="planPill">未生成</span>
-          <button class="btn warn" id="batchConfirmBtn">批量执行移库（写【移库台账】）</button>
+          <button class="btn warn" id="batchConfirmBtn">过账（写【移库台账】）</button>
         </div>
       </div>
     </div>
@@ -116,11 +111,11 @@
     <!-- 二次确认卡（仅「批量执行移库」绑定） -->
     <div class="confirm-overlay hidden" id="confirmOverlay">
       <div class="confirm">
-        <div class="ch">二次确认 · 批量执行移库（写【移库台账】）</div>
+        <div class="ch">二次确认 · 过账（写【移库台账】）</div>
         <div class="cl" id="confirmSummary"><span>移库即写【移库台账】，请确认。</span></div>
         <div class="cbtn">
           <button class="btn ghost" id="confirmCancel">取消</button>
-          <button class="btn warn" id="confirmOk">确认移库</button>
+          <button class="btn warn" id="confirmOk">过账</button>
         </div>
       </div>
     </div>
@@ -158,7 +153,6 @@
   const abcFilterEl = document.getElementById('abcFilter');
   const statusFilterEl = document.getElementById('statusFilter');
   const resetFilterBtn = document.getElementById('resetFilter');
-  const deviationTextEl = document.getElementById('deviationText');
 
   if (!queueEl || !window.api || !window.setState) return;
 
@@ -182,27 +176,11 @@
 
   function buildQuery() {
     let q = '/jobs?type=RELOCATE&warehouse_id=' + WID;
-    if (searchOrderEl.value.trim()) q += '&order_no=' + encodeURIComponent(searchOrderEl.value.trim());
+    // 搜索框搜的是物料号（`/api/jobs` 的 `material_code` 精确匹配），不是单号 `order_no`。
+    if (searchOrderEl.value.trim()) q += '&material_code=' + encodeURIComponent(searchOrderEl.value.trim());
     if (abcFilterEl.value) q += '&abc_class=' + abcFilterEl.value;
     if (statusFilterEl.value) q += '&status=' + statusFilterEl.value;
     return q;
-  }
-
-  async function loadDeviations() {
-    // 偏离批次清单 = 移库任务来源（只读），与可勾选的移库作业队列是两张清单（15 §7.2）。
-    try {
-      const rows = await window.api('/deviation?warehouse_id=' + WID, { method: 'GET' });
-      if (!rows || !rows.length) {
-        deviationTextEl.textContent = '当前无偏离批次（移库任务来自 KPI 看板后验超标批次）';
-        return;
-      }
-      deviationTextEl.textContent = rows.map(d =>
-        esc(d.batch_no || d.material_code) + '（' + esc(d.material_code || '—') + '）当前跨巷道 '
-        + d.actual_cross_aisle + ' / 阈值 ' + d.threshold_cross_aisle
-      ).join('　·　');
-    } catch (e) {
-      deviationTextEl.textContent = '偏离批次获取失败：' + errText(e);
-    }
   }
 
   async function loadPageData() {
@@ -323,7 +301,8 @@
         + '<td>' + esc(p.material_code) + '</td>'
         + '<td>' + esc(row.material_name || p.material_code) + '</td>'
         + '<td><b style="color:' + (cross.before > 5 ? 'var(--red)' : 'var(--amber)') + '">' + (cross.before != null ? cross.before : '—') + '</b></td>'
-        + '<td><span class="pill ok" data-target-aisle>巷道 ' + esc(p.target_aisle) + '</span></td>'
+        + '<td><span class="pill ok" data-target-aisle>巷道 ' + esc(p.target_aisle) + '</span>'
+        + '<div style="font-size:11px;color:var(--muted)">目标库位 ' + esc(p.target_location || '—') + '（搬出 ' + (p.source_locations ? p.source_locations.length : 0) + ' 格）</div></td>'
         + '<td style="color:var(--green)"><b>' + (cross.after != null ? cross.after : '—') + (cross.after < cross.before ? ' ↓' : '') + '</b></td>'
         + '<td class="opcell"><span class="mini" data-act="accept" data-index="' + i + '">接受</span>'
         + '<span class="mini ghost" data-act="adjust" data-index="' + i + '">微调</span>'
@@ -342,16 +321,12 @@
     // 'accept' = 沿用系统建议（默认即接受），无需请求；最终在「批量执行移库」统一确认。
   }
 
-  function adjustTarget(plan, el) {
-    // 微调 = 改目标巷道（15-04 §4.2：须过 cap / 批号 / 集中度校验）。原型只改目标巷道，
-    // 校验在方案派生时已做（derive_consolidation_plan），此处改目标不重校验 ——
-    // 确认前请人工核实目标巷道 cap 余量。
-    const input = prompt('微调目标巷道（当前 ' + plan.target_aisle + '）', plan.target_aisle);
-    if (input === null) return;
-    const aisle = input.trim();
-    if (!/^\d{2}$/.test(aisle)) { alert('巷道号须为 2 位数字'); return; }
-    plan.target_aisle = aisle;
-    el.closest('tr').querySelector('[data-target-aisle]').textContent = '巷道 ' + aisle;
+  function adjustTarget(plan) {
+    // 微调目标巷道不落地：目标库位（具体 6 位库位号）与逐格源库位由服务端按库存明细
+    // 解析。只改巷道号而不重新派生，会留下「巷道文本变了、真实目标库位还是旧的」错配，
+    // 且散板搬出明细（from_aisles / source_locations）也随目标巷道变化 —— 前端无法重算。
+    // 需要改目标巷道：调整库存后重新「批量生成方案」（15-04 §4.2 的校验在派生时做）。
+    alert('手动微调目标巷道需重新派生方案（目标库位 / 逐格源库位由服务端按库存解析）。\n请调整库存后重新「批量生成方案」。');
   }
 
   async function rejectOne(plan, el) {
@@ -366,16 +341,6 @@
     } catch (e) {
       alert(errText(e));
     }
-  }
-
-  function deriveLocations(plan) {
-    // 原型占位：库位号 = 巷道 + 固定格位后缀（6 位）。生产由收拢编排在目标巷道内选定
-    // 具体格位（本页不实现「巷道→格位」解析，design.md D5，同 inbound.html）。
-    const sourceAisle = (plan.from_aisles || [])[0];
-    return {
-      source_location_code: sourceAisle ? (sourceAisle + '0101') : null,
-      target_location_code: plan.target_aisle + '0101'
-    };
   }
 
   batchConfirmBtn.addEventListener('click', () => {
@@ -395,18 +360,20 @@
 
   async function doBatchConfirm() {
     const accepted = plans.filter(p => !p.rejected);
+    // 逐格真实源库位 + 目标库位来自收拢方案（服务端按库存明细解析），前端不编造库位号。
+    const missing = accepted.find(p => !(p.source_locations && p.source_locations.length) || !p.target_location);
+    if (missing) {
+      setState(planStatusEl, 'error', { text: '方案「' + esc(missing.batch_no) + '」缺少真实库位（逐格源库位 / 目标库位），请重新「批量生成方案」' });
+      return;
+    }
     const body = {
       warehouse_id: WID,
-      orders: accepted.map(p => {
-        const loc = deriveLocations(p);
-        return {
-          job_order_id: p.job_order_id,
-          // 移库源 + 目标都填（_require_locations 移库两者必填），批号不变（CLAUDE.md §四）。
-          source_location_code: loc.source_location_code,
-          target_location_code: loc.target_location_code,
-          lock_version: p.lock_version
-        };
-      })
+      orders: accepted.map(p => ({
+        job_order_id: p.job_order_id,
+        source_locations: p.source_locations,
+        target_location_code: p.target_location,
+        lock_version: p.lock_version
+      }))
     };
     setState(planStatusEl, 'loading', { text: '移库执行中…' });
     try {
@@ -460,7 +427,6 @@
   });
 
   generatePlanBtn.addEventListener('click', generatePlan);
-  loadDeviations();
   loadPageData();
 })();
 </script>

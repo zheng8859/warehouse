@@ -9,7 +9,8 @@
 夹具的 `factory` 直连库、直接调函数，不经过 TestClient。要钉住三点：
 
 1. **载入**：PO → `JobOrder(job_type=INBOUND)`、DO → `JobOrder(job_type=OUTBOUND)`，
-   业务状态初值 `PENDING`，字段取自源行（单号/行号/料号/品名/数量），`batch_no` 为空。
+   业务状态初值 `PENDING`，字段取自源行（单号/行号/料号/品名/数量）。PO 在入库单建立
+   时生成批号（D11，注入固定 `now` 钉住）；DO 的 `batch_no` 留空。
 2. **回滚**：同一 PO 内重复（单号+行号）撞唯一键 → 整批回滚，不产出半成品，退回 FAILED。
 3. **守卫**：入口非 `VALIDATED` 抛 `StateConflict`（try 之外，不是「执行失败」）。
 """
@@ -69,7 +70,9 @@ def _validated_session(db) -> ImportSession:
 def test_po_splits_to_inbound_pending_order(job_api) -> None:
     with job_api.factory() as db:
         session_row = _validated_session(db)
-        execute_import(db, session_row, [_csv(FileType.PO, "PO.csv", PO_CSV)])
+        execute_import(
+            db, session_row, [_csv(FileType.PO, "PO.csv", PO_CSV)], now=datetime(2026, 9, 8)
+        )
         db.commit()
 
     orders = job_api.orders()
@@ -82,7 +85,8 @@ def test_po_splits_to_inbound_pending_order(job_api) -> None:
     assert order.material_code == "3001234"
     assert order.material_name == "PET500 茉莉柚茶"
     assert order.qty == 500
-    assert order.batch_no is None  # PO 模版无批号列，批号由入库单建立时生成
+    # 批号由入库单建立时按生产批规则生成（D11），不再留空：2026-09-08 → GJP2690871。
+    assert order.batch_no == "GJP2690871"
 
 
 def test_do_splits_to_outbound_pending_order(job_api) -> None:
@@ -97,6 +101,7 @@ def test_do_splits_to_outbound_pending_order(job_api) -> None:
     assert orders[0].status is JobStatus.PENDING
     assert orders[0].order_no == "DO-01"
     assert orders[0].qty == 120
+    assert orders[0].batch_no is None  # 出库单不生成批号，顺路取时才从库存明细选出
 
 
 def test_po_and_do_together_load_both_queues(job_api) -> None:

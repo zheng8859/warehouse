@@ -275,15 +275,31 @@ def apply_increment(session: Session, *, ledger: Ledger, snapshot: Snapshot | No
         _apply_outbound(session, ledger=ledger, snapshot=snapshot, sign=sign)
     else:  # RELOCATE
         assert source is not None and target is not None
-        _mutate(
-            session,
-            snapshot=snapshot,
-            location_code=source,
-            batch_no=ledger.batch_no,
-            material_code=ledger.material_code,
-            material_name=ledger.material_name,
-            delta=-cells * sign,
-        )
+        source_locations = (ledger.plan_json or {}).get("source_locations")
+        if source_locations:
+            # 逐格源库位（缺口 2）：散落板跨多个库位，按 plan_json 里的真实库位号逐格扣减。
+            # 台账行仍是单行（`source_location_code` 只是代表库位），完整搬出明细在这里。
+            for entry in source_locations:
+                _mutate(
+                    session,
+                    snapshot=snapshot,
+                    location_code=entry["location_code"],
+                    batch_no=ledger.batch_no,
+                    material_code=ledger.material_code,
+                    material_name=ledger.material_name,
+                    delta=-to_occupied_cells(entry["qty"]) * sign,
+                )
+        else:
+            # 兼容无逐格清单的历史行：回退单源库位扣减（本阶段之前的移库台账）。
+            _mutate(
+                session,
+                snapshot=snapshot,
+                location_code=source,
+                batch_no=ledger.batch_no,
+                material_code=ledger.material_code,
+                material_name=ledger.material_name,
+                delta=-cells * sign,
+            )
         _mutate(
             session,
             snapshot=snapshot,

@@ -108,6 +108,26 @@ def test_warehouse_mismatch_blocks() -> None:
     assert any("仓库号须为 GTJ10036" == i.reason for i in issues)
 
 
+def test_snapshot_time_compact_format_passes() -> None:
+    """WMS 无分隔符 `20260915`（文本）与 Excel 数字格 20260915 都须放行 —— 与执行同口径。"""
+    assert _business_issues([_row(库存记录时间="20260915")]) == []
+    assert _business_issues([_row(库存记录时间=20260915)]) == []
+    assert _business_issues([_row(库存记录时间=datetime(2026, 9, 15, 0, 0))]) == []
+
+
+def test_snapshot_time_empty_blocks() -> None:
+    assert any("库存记录时间为空" == i.reason for i in _business_issues([_row(库存记录时间="")]))
+    assert any("库存记录时间为空" == i.reason for i in _business_issues([_row(库存记录时间=None)]))
+
+
+def test_snapshot_time_unparseable_blocks() -> None:
+    """不可解析的时间在「开始校验」即阻断，不允许拖到执行时崩 500。"""
+    issues = _business_issues([_row(库存记录时间="二零二六年")])
+    issue = next(i for i in issues if i.column == "snapshot_time")
+    assert issue.reason.startswith("库存记录时间格式无法解析")
+    assert (issue.row, issue.layer) == (1, ValidationLayer.BUSINESS)
+
+
 def test_issue_carries_file_column_row() -> None:
     """回执可展开到「文件 + 列 + 行 + 原因」级。"""
     issues = _business_issues([_row(批号="")])

@@ -157,6 +157,9 @@ class InventoryProfile:
     plates_by_aisle: Mapping[str, int] = field(default_factory=dict)
     #: 巷道 → 该巷的既有批号集。`existing` 数板数、`batch` 比批号，同一个巷道的两种事实。
     batches_by_aisle: Mapping[str, frozenset[str]] = field(default_factory=dict)
+    #: 批号 → 巷道 → 数量。`plates_by_aisle` 只有巷道总量，出库顺路取要按批 FIFO、按巷拆量
+    #: （`derive_pick_sequence`），故把「同一批号在哪些巷各有多少」单独存一份。
+    qty_by_batch_by_aisle: Mapping[str, Mapping[str, int]] = field(default_factory=dict)
 
     #: 快照缺失时的原因（`snapshot_present=False` 时才有意义）。
     degrade_reason: str | None = None
@@ -189,6 +192,11 @@ class SnapshotIndex:
     batches_by_material: Mapping[str, Mapping[str, frozenset[str]]] = field(
         default_factory=dict
     )
+    #: 料号 → 批号 → 巷道 → 数量。出库顺路取要按批 FIFO 拆巷，`plates_by_material` 只给
+    #: 巷道总量（分配器的既有集仍用它），这份三层映射供 `derive_pick_sequence` 取数。
+    qty_by_batch_by_material: Mapping[str, Mapping[str, Mapping[str, int]]] = field(
+        default_factory=dict
+    )
     degrade_reason: str | None = None
 
     @classmethod
@@ -205,6 +213,7 @@ class SnapshotIndex:
         """
         plates: dict[str, dict[str, int]] = {}
         batches: dict[str, dict[str, set[str]]] = {}
+        qty_by_batch: dict[str, dict[str, dict[str, int]]] = {}
         for row in rows:
             aisle = aisle_of(row.location_code)
             material_plates = plates.setdefault(row.material_code, {})
@@ -212,11 +221,19 @@ class SnapshotIndex:
             batches.setdefault(row.material_code, {}).setdefault(aisle, set()).add(
                 row.batch_no
             )
+            qty_by_batch.setdefault(row.material_code, {}).setdefault(
+                row.batch_no, {}
+            ).setdefault(aisle, 0)
+            qty_by_batch[row.material_code][row.batch_no][aisle] += row.qty
         return cls(
             snapshot_present=True,
             plates_by_material={m: dict(v) for m, v in plates.items()},
             batches_by_material={
                 m: {a: frozenset(b) for a, b in v.items()} for m, v in batches.items()
+            },
+            qty_by_batch_by_material={
+                m: {b: dict(a) for b, a in by_batch.items()}
+                for m, by_batch in qty_by_batch.items()
             },
         )
 
@@ -230,6 +247,9 @@ class SnapshotIndex:
             snapshot_present=True,
             plates_by_aisle=dict(self.plates_by_material.get(material_code, {})),
             batches_by_aisle=dict(self.batches_by_material.get(material_code, {})),
+            qty_by_batch_by_aisle=dict(
+                self.qty_by_batch_by_material.get(material_code, {})
+            ),
         )
 
 

@@ -168,3 +168,46 @@ def test_po_do_without_inv_stays_imported(job_api) -> None:
     items, snapshots, caps, orders = _read(job_api.factory)
     assert snapshots == () and caps == () and items == ()
     assert len(orders) == 1
+
+
+# ------------------------------------------------------------------ 库存记录时间格式（导入页 500 回归）
+
+# WMS 真实导出形态：时间是无分隔符 8 位 `20260915`，状态用「良品」。
+INV_CSV_COMPACT_TIME = (
+    f"{_INV_HEADER}\n"
+    "GTJ10036,010104,3001234,PET500 茉莉柚茶,B001,良品,40,20260915\n"
+    "GTJ10036,020101,3005678,PET500 茉莉柚茶,B002,良品,40,20260915\n"
+)
+
+# 完全无法解析的时间（正常校验层会先拦住；此处验证执行层的纵深防御）。
+INV_CSV_BAD_TIME = (
+    f"{_INV_HEADER}\n"
+    "GTJ10036,010104,3001234,PET500 茉莉柚茶,B001,良品,40,二零二六年\n"
+)
+
+
+def test_inv_compact_yyyymmdd_snapshot_time_baselines(job_api) -> None:
+    """无分隔符 `20260915` 能正常分流并建基线（本次导入页 500 的真实数据形态）。"""
+    with job_api.factory() as db:
+        session_row = _validated_session(db)
+        execute_import(db, session_row, [_csv(FileType.INV, "INV.csv", INV_CSV_COMPACT_TIME)])
+        assert session_row.status is ImportStatus.BASELINE
+        db.commit()
+
+    items, snapshots, caps, orders = _read(job_api.factory)
+    assert len(snapshots) == 1 and len(items) == 2 and len(caps) == 2
+    assert all(i.snapshot_time == datetime(2026, 9, 15) for i in items)
+    assert orders == ()
+
+
+def test_inv_unparseable_snapshot_time_fails_without_raising(job_api) -> None:
+    """执行期遇到无法解析的时间：落 FAILED 并返回，**不抛异常**（不得冒泡成 HTTP 500），
+    且不产生任何快照 / 库存 / cap 半成品。"""
+    with job_api.factory() as db:
+        session_row = _validated_session(db)
+        result = execute_import(db, session_row, [_csv(FileType.INV, "INV.csv", INV_CSV_BAD_TIME)])
+        assert result.status is ImportStatus.FAILED
+        db.commit()
+
+    items, snapshots, caps, orders = _read(job_api.factory)
+    assert snapshots == () and items == () and caps == () and orders == ()

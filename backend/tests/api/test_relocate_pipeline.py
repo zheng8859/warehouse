@@ -128,7 +128,8 @@ def test_relocate_pipeline_end_to_end(job_api: Api) -> None:
     assert plan["from_aisles"] == ["03"]
     assert plan["plates"] == 10
 
-    # 步 4：逐单确认（移库源 + 目标都填）→ EXECUTED → 后验 → VERIFIED。
+    # 步 4：逐单确认（移库逐格源库位 + 目标库位）→ EXECUTED → 后验 → VERIFIED。
+    #       源库位取自方案的 `source_locations`（真实库位号，非编造「巷道 + 固定后缀」）。
     confirm_resp = job_api.client.post(
         CONFIRM_URL,
         json={
@@ -136,7 +137,7 @@ def test_relocate_pipeline_end_to_end(job_api: Api) -> None:
             "orders": [
                 {
                     "job_order_id": order_id,
-                    "source_location_code": "030101",
+                    "source_locations": [{"location_code": "030101", "qty": 10}],
                     "target_location_code": "010101",
                 }
             ],

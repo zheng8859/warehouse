@@ -34,7 +34,7 @@ from enum import Enum
 from typing import Any
 
 from app.core.enums import FileType
-from app.importer.loaders import as_location_code
+from app.importer.loaders import as_datetime, as_location_code
 from app.importer.mapping import MappingResult
 
 __all__ = [
@@ -190,6 +190,7 @@ def validate_business(
             issues.extend(_check_location(_value(row, mapping, "location_code"), row_no, filename))
             issues.extend(_check_batch(_value(row, mapping, "batch_no"), row_no, filename))
             issues.extend(_check_status(_value(row, mapping, "item_status"), row_no, filename))
+            issues.extend(_check_snapshot_time(_value(row, mapping, "snapshot_time"), row_no, filename))
         else:
             issues.extend(_check_required_text(_value(row, mapping, "order_no"), "单据号码", "order_no", row_no, filename))
             issues.extend(_check_required_text(_value(row, mapping, "line_no"), "行号", "line_no", row_no, filename))
@@ -248,6 +249,23 @@ def _check_status(raw: Any, row_no: int, filename: str) -> list[ValidationIssue]
     text = str(raw).strip() if raw is not None else ""
     if text == "":
         return [_issue(IssueLevel.BLOCKING, ValidationLayer.BUSINESS, filename, "状态不能为空", column="item_status", row=row_no)]
+    return []
+
+
+def _check_snapshot_time(raw: Any, row_no: int, filename: str) -> list[ValidationIssue]:
+    """库存记录时间必填、且能按支持格式解析（INV 行级时点）。
+
+    与执行分流 `split_inventory_items` 用**同一个** `as_datetime` 原语 —— 校验与执行
+    口径必须一致：这里放行了，执行时就必须能解析。曾因执行侧私有格式表少了无分隔符
+    `%Y%m%d`（WMS 导出的 `20260915`），而校验层又完全不查本列，导致校验 PASSED 的
+    文件在「执行导入」时抛 ValueError 崩成 HTTP 500。
+    """
+    if raw is None or (isinstance(raw, str) and raw.strip() == ""):
+        return [_issue(IssueLevel.BLOCKING, ValidationLayer.BUSINESS, filename, "库存记录时间为空", column="snapshot_time", row=row_no)]
+    try:
+        as_datetime(raw)
+    except (ValueError, TypeError):
+        return [_issue(IssueLevel.BLOCKING, ValidationLayer.BUSINESS, filename, "库存记录时间格式无法解析（支持 2026-09-15 / 2026/09/15 / 20260915 等）", column="snapshot_time", row=row_no)]
     return []
 
 

@@ -128,6 +128,10 @@ def test_pending_relocate_is_derived_and_marked_planned(job_api) -> None:
     assert plan["expected_cross_aisle"] == {"before": 3, "after": 2}
     assert plan["batch_unchanged"] is True
     assert plan["degrade_reason"] is None
+    # 缺口 2：真实库位 —— 源库位取自库存行（030101），目标库位 = 目标巷道内该物料
+    # 既有库位的最低库位号（010101），不是「巷道 + 固定后缀」的编造。
+    assert plan["source_locations"] == [{"location_code": "030101", "qty": 10}]
+    assert plan["target_location"] == "010101"
     assert isinstance(plan["plan_id"], int)
 
     order = _order(job_api)
@@ -162,6 +166,13 @@ def test_cap_insufficient_main_degrades_to_second(job_api) -> None:
     assert plan["plates"] == 15
     assert plan["expected_cross_aisle"] == {"before": 3, "after": 2}
     assert plan["degrade_reason"] and "容量不足" in plan["degrade_reason"]
+    # 次选巷道的逐格源库位覆盖两个散落巷道（01 的 010101 5 箱 + 03 的 030101 10 箱），
+    # 目标库位 = 次选巷道 02 内该物料的既有库位（020101）。
+    assert plan["source_locations"] == [
+        {"location_code": "010101", "qty": 5},
+        {"location_code": "030101", "qty": 10},
+    ]
+    assert plan["target_location"] == "020101"
 
     order = _order(job_api)
     assert order.status is JobStatus.PLANNED
@@ -215,7 +226,43 @@ def test_idempotent_resubmit_returns_existing_plan_without_rewriting(job_api) ->
     assert len(_plan_rows(job_api)) == 1
 
 
-# ------------------------------------------------------------------ ⑤ 无快照 409
+# ------------------------------------------------------------------ ⑤ 旧格式方案回填不 500
+
+def test_legacy_plan_without_source_locations_is_rederived(job_api) -> None:
+    """缺口 2 之前的旧方案缺 `source_locations` / `target_location` → 不 500，重派生追加新行。
+
+    `RelocatePlanItem` 现在必填 `source_locations`（`min_length=1`）与 `target_location`
+    （`min_length=6`）；历史库里缺口 2 之前的方案没有这两项，幂等分支原样回填会撞
+    Pydantic 必填校验（500）。回归钉住：幂等命中要同时校验「版本相同 **且** 格式当前」，
+    旧格式视作「格式过期」走重派生，追加一行当前格式的新方案。
+    """
+    (order_id,) = _scatter_scenario(job_api, caps={"01": 100, "02": 100, "03": 100})
+
+    first = _relocate(job_api, [order_id]).json()
+    (first_plan,) = first["plans"]
+    assert first_plan["plan_id"] is not None
+
+    # 把已落库的方案改造成缺口 2 之前的旧格式（去掉逐格源库位 / 目标库位）。
+    # `payload_json` 是 sa.JSON（非 MutableDict），原地 pop 不被追踪 —— 整体重赋值。
+    with job_api.factory() as session:
+        row = session.scalars(select(RecommendationPlan)).one()
+        payload = dict(row.payload_json)
+        payload.pop("source_locations", None)
+        payload.pop("target_location", None)
+        row.payload_json = payload
+        session.commit()
+
+    second = _relocate(job_api, [order_id]).json()
+
+    (second_plan,) = second["plans"]
+    assert second_plan["source_locations"] == [{"location_code": "030101", "qty": 10}]
+    assert second_plan["target_location"] == "010101"
+    assert second_plan["plan_id"] != first_plan["plan_id"], "旧格式应重派生、追加新方案行，而非回填旧行"
+    assert _order(job_api).status is JobStatus.PLANNED
+    assert len(_plan_rows(job_api)) == 2
+
+
+# ------------------------------------------------------------------ ⑥ 无快照 409
 
 def test_missing_snapshot_blocks_the_batch(job_api) -> None:
     """无快照 → 409 阻断、零写入（D3：提示重新导入，不猜测）。

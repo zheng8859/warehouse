@@ -31,12 +31,27 @@ from app.importer.detect import Detected, FileFormat, TextEncoding
 
 __all__ = [
     "as_date",
+    "as_datetime",
     "as_location_code",
     "parse_rows",
 ]
 
 #: 日期字符串的两种常见形态（CSV 导出）：`2026-09-08` 与 `2026/09/08`。
 _DATE_TEXT_FORMATS = ("%Y-%m-%d", "%Y/%m/%d")
+
+#: 「库存记录时间」的常见文本形态（WMS/SAP 导出）：除分隔符日期外，还含**无分隔符
+#: 紧凑日期** `20260915` 与 14 位紧凑日期时间 `20260915000000` —— 这是 GTJ10036
+#: 库存快照导出的真实形态，缺了它会在执行分流时把合法文件解析崩（曾致导入页 500）。
+_DATETIME_TEXT_FORMATS = (
+    "%Y-%m-%d %H:%M:%S",
+    "%Y-%m-%d %H:%M",
+    "%Y-%m-%d",
+    "%Y/%m/%d %H:%M:%S",
+    "%Y/%m/%d %H:%M",
+    "%Y/%m/%d",
+    "%Y%m%d%H%M%S",
+    "%Y%m%d",
+)
 
 #: Excel 日期序列号的纪元。serial 1 = 1900-01-01，但有 1900 闰年 bug，故基准是
 #: 1899-12-30（`datetime(1899,12,30) + timedelta(days=serial)` 才是正确换算）。
@@ -157,3 +172,48 @@ def as_date(value: Any) -> date | None:
         raise ValueError(f"无法解析日期文本：{value!r}")
 
     raise ValueError(f"日期值类型不可归一：{type(value).__name__}")
+
+
+def as_datetime(value: Any) -> datetime:
+    """库存记录时间归一成 `datetime`（必填列：空值 / 不可解析一律抛 `ValueError`）。
+
+    与 `as_date` 的区别：那是**选填**列（生产日期）缺失返回 `None`；本列必填，缺失与
+    解析失败都必须抛错，由校验层转成阻断明细（而不是在执行分流时崩成 500）。
+
+    支持的输入：
+      - `datetime` 直取；`date` 补当日零点；
+      - 字符串：见 `_DATETIME_TEXT_FORMATS`（含 WMS 导出的无分隔符 `20260915`、
+        `20260915000000`）；
+      - `int` / `float`：8 位整数按 `%Y%m%d`（Excel 把紧凑日期存成数字格的情形），
+        其余按 Excel 日期序列号（与 `as_date` 同一纪元换算）。
+
+    `bool` 显式拒绝（`True` 会被当成 `1` 的历史坑）。
+    """
+    if isinstance(value, bool):
+        raise ValueError("库存记录时间不能是布尔值")
+
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, date):
+        return datetime.combine(value, datetime.min.time())
+
+    if isinstance(value, (int, float)):
+        number = int(value)
+        # 8 位紧凑日期（YYYYMMDD）：Excel 数字格存 20260915 的情形；序列号恒为 5 位
+        # （2026 年约 46xxx），二者不会混淆。先验 8 位、再回退序列号。
+        if 19000101 <= number <= 29991231:
+            return datetime.strptime(str(number), "%Y%m%d")
+        return datetime.combine(_EXCEL_EPOCH, datetime.min.time()) + timedelta(days=number)
+
+    if isinstance(value, str):
+        text = value.strip()
+        if text == "":
+            raise ValueError("库存记录时间为空字符串")
+        for fmt in _DATETIME_TEXT_FORMATS:
+            try:
+                return datetime.strptime(text, fmt)
+            except ValueError:
+                continue
+        raise ValueError(f"无法解析库存记录时间：{value!r}")
+
+    raise ValueError(f"库存记录时间值类型不可归一：{type(value).__name__}")

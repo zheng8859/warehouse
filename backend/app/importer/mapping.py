@@ -24,9 +24,9 @@
   文件内的「类型」字段不作为路由依据）。故 `JobOrder.job_type` 由 `FileType` 派生
   （PO→INBOUND、DO→OUTBOUND），**不读源文件的「类型」列** —— 该列只被识别为合法模版列
   （不落 `unrecognized`），不参与分流。
-- 「生产日期」（`production_date`）选填：它只是 FIFO / 批号生成的**参考**（16 A.2/A.3 标选填），
-  缺失不阻断；批号由系统在入库单建立时按生产批规则生成（`JobOrder.batch_no` 的注释），
-  规则本身属阶段四。
+- 「生产日期」（`production_date`）选填：16 A.2/A.3 标选填，缺失不阻断。批号的「生产日期」
+  取**入库单建立当天**（D11 现场日期，`generate_batch_no(now)`），不读本列 —— 本列只是
+  源数据里保留的参考信息（如 FIFO）。
 """
 from __future__ import annotations
 

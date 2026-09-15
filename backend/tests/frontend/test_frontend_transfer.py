@@ -4,12 +4,12 @@
 `transfer.html` 已把硬编码演示值换成后端真实 API 接线：
 
 1. 无硬编码演示批次 `GJP2571305` / `GJP2570888`；
-2. 含内联脚本，引用 `GET /api/jobs?type=RELOCATE`（队列）、`GET /api/deviation`
-   （偏离批次来源）与 `POST /api/job/batch/relocate-plan`（收拢方案）+ `setState` 四态；
+2. 含内联脚本，引用 `GET /api/jobs?type=RELOCATE`（队列，搜索框按 `material_code`
+   精确匹配物料号）与 `POST /api/job/batch/relocate-plan`（收拢方案）+ `setState` 四态；
 3. 二次确认逻辑只绑定「批量执行移库」按钮（写台账端点 `POST /api/job/batch/confirm`
    只在确认卡「确认移库」后调用；「批量生成方案」不弹卡）；
-4. 移库 confirm 体带 source_location_code / target_location_code（_require_locations 移库
-   两者必填，由 from_aisles[0] / target_aisle 派生），且批号不变。
+4. 移库 confirm 体带 source_locations（逐格真实源库位）+ target_location_code（目标库位），
+   由方案里服务端解析的 source_locations / target_location 直传（非前端编造），且批号不变。
 
 事实来源：openspec/changes/relocate-domain/tasks.md 数据层 + design.md（移库不改批号）。
 """
@@ -31,11 +31,9 @@ def test_no_hardcoded_demo_batch():
 
 
 def test_inline_script_wired_to_backend():
-    """内联脚本存在，偏离 / 队列 / 收拢方案 / 四态都接后端（design.md）。"""
+    """内联脚本存在，队列 / 收拢方案 / 四态都接后端（design.md）。"""
     # 内联脚本（IIFE，同 inbound.html 范式）
     assert "(function () {" in TRANSFER
-    # 偏离批次来源接 GET /api/deviation（只读任务依据）
-    assert "window.api('/deviation?warehouse_id='" in TRANSFER
     # 队列接 GET /api/jobs?type=RELOCATE
     assert "'/jobs?type=RELOCATE" in TRANSFER
     assert "window.api(buildQuery()" in TRANSFER
@@ -74,22 +72,36 @@ def test_lock_version_refreshed_after_relocate_plan():
 
 
 def test_relocate_confirm_carries_source_and_target():
-    """移库 confirm 体带 source/target（_require_locations 移库两者必填），由巷道派生。
+    """移库 confirm 体带逐格源库位 + 目标库位（_require_locations 移库两者必填）。
 
-    库位号 = 巷道 + 固定格位后缀（6 位，原型占位，design.md D5 同 inbound.html）；
-    源 = from_aisles[0]，目标 = target_aisle。移库不改批号（CLAUDE.md §四）。
+    源 = 方案里服务端解析的 `source_locations`（逐格真实库位，非前端编造「巷道 + 固定后缀」）、
+    目标 = `target_location`（目标巷道内该物料既有库位）。移库不改批号（CLAUDE.md §四）。
     """
-    assert "source_location_code" in TRANSFER
+    assert "source_locations" in TRANSFER
+    assert "target_location" in TRANSFER
     assert "target_location_code" in TRANSFER
-    assert "from_aisles" in TRANSFER
     assert "target_aisle" in TRANSFER
-    # 移库 confirm 体不含 pick_path（那是出库的顺路取字段，两者不混用）。
+    # 移库 confirm 体不含单一 source_location_code（散板跨多格，改逐格清单），
+    # 也不含 pick_path（那是出库的顺路取字段，两者不混用）。
+    assert "source_location_code" not in TRANSFER
     assert "pick_path" not in TRANSFER
 
 
 def test_regions_still_present():
-    """`.dev-strip`（偏离清单）/ `.ord` / `.btab` / `.postbar` 区域仍在。"""
-    for cls in ('id="deviationStrip"', 'class="ord', 'class="btab"', 'class="postbar"'):
+    """`.ord` / `.btab` / `.postbar` 区域仍在（偏离清单 dev-strip 已删，见下一条）。"""
+    for cls in ('class="ord', 'class="btab"', 'class="postbar"'):
         assert cls in TRANSFER, f"缺区域 class {cls}"
     for marker in ('id="queue"', 'id="planBody"', 'id="postbar"', 'id="confirmOverlay"'):
         assert marker in TRANSFER, f"缺区域 id {marker}"
+
+
+def test_deviation_strip_removed():
+    """偏离清单 dev-strip 已删除（移库作业不再展示偏离信息，Problem 2）。"""
+    assert 'id="deviationStrip"' not in TRANSFER
+    assert "window.api('/deviation" not in TRANSFER
+
+
+def test_search_filters_by_material_code():
+    """搜索框搜物料号：buildQuery 拼 `&material_code=`（精确匹配），非单号 order_no 前缀。"""
+    assert "&material_code=" in TRANSFER
+    assert "&order_no=" not in TRANSFER

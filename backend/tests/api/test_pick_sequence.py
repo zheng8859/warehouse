@@ -82,11 +82,11 @@ def _outbound_scenario(job_api,*, in_stock: bool = True):
 # ------------------------------------------------------------------ ① 派生迁 PLANNED
 
 def test_pending_order_is_derived_and_marked_planned(job_api) -> None:
-    """PENDING 出库单派生 → 写 `plan_kind=PICK` 方案、迁 `PLANNED`、回写批次号。
+    """PENDING 出库单派生 → 写 `plan_kind=PICK` 方案、迁 `PLANNED`、回写批次号 + FIFO 批号。
 
-    顺路取是**只读派生**：`pick_sequence` 按现状分布（库位 `010101` → 巷道 `01`，10 板），
-    加权集中度 = 1（一条巷道全覆盖），不超 N=5。同时钉住「不写台账」—— 未确认不产生台账
-    （`CLAUDE.md` §四）。
+    顺路取是**只读派生**：`pick_sequence` 按订单量 5 封顶（库存 10 板 → 拣 5），加权集中度
+    = 1（一条巷道全覆盖），不超 N=5；`order.batch_no` 回写 FIFO 最早批 `B260801`。同时钉住
+    「不写台账」—— 未确认不产生台账（`CLAUDE.md` §四）。
     """
     scenario = _outbound_scenario(job_api)
     (order_id,) = [str(o.id) for o in scenario.job_orders]
@@ -98,7 +98,12 @@ def test_pending_order_is_derived_and_marked_planned(job_api) -> None:
     assert plan["job_order_id"] == order_id
     assert plan["do_no"] == "DO-20260908-001"
     assert plan["pick_sequence"] == [
-        {"aisle": "01", "qty": 10, "batches": ["B260801"]}
+        {
+            "aisle": "01",
+            "qty": 5,
+            "batches": ["B260801"],
+            "locations": [{"location_code": "010101", "qty": 5, "batch_no": "B260801"}],
+        }
     ]
     assert plan["weighted_concentration"] == 1
     assert plan["threshold_n"] == 5
@@ -107,6 +112,7 @@ def test_pending_order_is_derived_and_marked_planned(job_api) -> None:
 
     order = _order(job_api)
     assert order.status is JobStatus.PLANNED
+    assert order.batch_no == "B260801"  # 顺路取回写 FIFO 最早批（出库单导入时留空）
     assert order.bulk_batch_no == body["bulk_batch_no"]
     assert order.lock_version == 1
 
@@ -167,6 +173,41 @@ def test_idempotent_resubmit_returns_existing_plan_without_rewriting(job_api) ->
     assert len(_plan_rows(job_api)) == 1
 
 
+# ------------------------------------------------------------------ ③½ 旧格式（无 locations）重派生升级
+
+def test_old_format_plan_without_locations_re_derives_and_appends(job_api) -> None:
+    """缺口 3 之前落库的旧方案（`pick_sequence` 无 `locations`）重提交 → 视为格式过期，
+    重新派生并**追加**一行当前格式（含 `locations`）的新方案，而非原样回填旧形状。
+
+    镜像 relocate 缺口 2 的 `source_locations` 守卫：旧形状不回填，重派生升级。
+    """
+    scenario = _outbound_scenario(job_api)
+    (order_id,) = [str(o.id) for o in scenario.job_orders]
+
+    first = _pick_sequence(job_api, [order_id]).json()
+    (first_plan,) = first["plans"]
+    assert first_plan["pick_sequence"][0]["locations"], "新方案本应含库位级 locations"
+
+    # 把当前方案改造成「缺口 3 之前」的旧格式（剥掉每巷的 locations 键），模拟历史落库行。
+    with job_api.factory() as session:
+        row = session.get(RecommendationPlan, first_plan["plan_id"])
+        row.payload_json = {
+            **row.payload_json,
+            "pick_sequence": [
+                {k: v for k, v in entry.items() if k != "locations"}
+                for entry in row.payload_json["pick_sequence"]
+            ],
+        }
+        session.commit()
+
+    second = _pick_sequence(job_api, [order_id]).json()
+
+    (second_plan,) = second["plans"]
+    assert second_plan["plan_id"] > first_plan["plan_id"], "旧格式应重派生追加新行，而非返既有"
+    assert second_plan["pick_sequence"][0]["locations"], "重派生后的方案应升级为含 locations"
+    assert len(_plan_rows(job_api)) == 2, "旧方案保留（可追溯），新方案追加"
+
+
 # ------------------------------------------------------------------ ④ 视图推进重新派生
 
 def test_advanced_snapshot_version_re_derives_and_appends_a_plan(job_api) -> None:
@@ -211,7 +252,8 @@ def test_advanced_snapshot_version_re_derives_and_appends_a_plan(job_api) -> Non
 
     order = _order(job_api)
     assert order.status is JobStatus.PLANNED, "已 PLANNED，重派生不重迁状态"
-    assert order.lock_version == 1, "重派生只追加方案，不动作业单行"
+    assert order.batch_no == "B260801", "重派生回写 FIFO 最早批（本场景两版视图同批）"
+    assert order.lock_version == 2, "重派生回写 batch_no，推进乐观锁"
 
 
 # ------------------------------------------------------------------ ⑤ 无快照 409
@@ -335,7 +377,9 @@ def test_confirm_with_pick_path_writes_it_to_ledger(job_api) -> None:
     (ledger,) = job_api.ledgers()
     assert ledger.source_location_code is None
     assert ledger.target_location_code is None
-    assert ledger.pick_path_json == [{"aisle": "01", "qty": 5, "batches": ["B260801"]}]
+    assert ledger.pick_path_json == [
+        {"aisle": "01", "qty": 5, "batches": ["B260801"], "locations": []}
+    ]
 
 
 def test_confirm_without_pick_path_falls_back_to_current_plan(job_api) -> None:

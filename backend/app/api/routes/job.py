@@ -53,6 +53,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import current_account, get_db, require_permission
 from app.api.permissions import Permission
+from app.cap.deviation import refresh_material_deviations
 from app.core.concurrency import bump_lock_version
 from app.core.config import settings
 from app.core.config_version import pick_current_version
@@ -65,6 +66,7 @@ from app.engine.reserved import available_cap
 from app.models.configuration import CapacityConfig
 from app.models.identity import Account
 from app.models.job import (
+    Deviation,
     DeviationStatus,
     JobOrder,
     Ledger,
@@ -73,6 +75,7 @@ from app.models.job import (
     Verification,
 )
 from app.models.linkage import AisleCap, InventoryItem, Snapshot
+from app.models.master_data import Material
 from app.schemas.job import (
     BatchConfirmRequest,
     BatchConfirmResponse,
@@ -85,6 +88,9 @@ from app.schemas.job import (
     LedgerItem,
     RejectRequest,
     RetryRequest,
+    ScatteredBatchItem,
+    StartRelocateRequest,
+    StartRelocateResponse,
     VerificationItem,
     VoidRequest,
 )
@@ -102,7 +108,7 @@ from app.services import kpi
 from app.services.inbound import confirm_inbound
 from app.services.outbound import confirm_outbound, derive_pick_sequence
 from app.services.relocate import confirm_relocate, derive_consolidation_plan
-from app.services.verify import run_verification
+from app.services.verify import DEFAULT_BATCH_CROSS_AISLE, run_verification
 from app.services.void import void_job
 
 router = APIRouter(prefix="/api/job")
@@ -301,6 +307,20 @@ def _current_pick_plan(session: Session, *, order: JobOrder) -> RecommendationPl
     ).first()
 
 
+def _pick_plan_has_locations(plan: RecommendationPlan | None) -> bool:
+    """旧格式顺路取方案（缺口 3 之前）的 `pick_sequence` 元素只有 `aisle/qty/batches`、
+    没有 `locations` —— 判「格式过期」，幂等命中须同时满足此条，否则走重派生追加一行
+    当前格式（含库位级 `locations`）的新方案。镜像 relocate 缺口 2 的 `source_locations`
+    守卫：旧形状不回填，重派生升级。
+    """
+    if plan is None:
+        return False
+    seq = plan.payload_json.get("pick_sequence")
+    if not isinstance(seq, list) or not seq:
+        return False
+    return all(isinstance(entry, dict) and "locations" in entry for entry in seq)
+
+
 def _current_consolidation_plan(
     session: Session, *, order: JobOrder
 ) -> RecommendationPlan | None:
@@ -346,6 +366,174 @@ def _batch_plates_by_aisle(
         aisle = aisle_of(location_code)
         by_aisle[aisle] = by_aisle.get(aisle, 0) + qty
     return by_aisle
+
+
+def _batch_locations_by_aisle(
+    session: Session,
+    *,
+    snapshot_id: int,
+    warehouse_id: str,
+    material_code: str,
+    batch_no: str | None,
+) -> dict[str, list[tuple[str, int]]]:
+    """该单 `(material_code, batch_no)` 的库存行按巷道聚合为逐格 `(location_code, qty)`。
+
+    缺口 2 的**逐格真实源库位**来源：收拢方案要给出真实库位号（不是「巷道 + 固定后缀」），
+    执行侧据此逐格扣减。每巷内按库位号升序（确定性）；`qty` 是箱数（源单位，与
+    `InventoryItem.qty` 同口径），不做板-格换算。
+    """
+    by_aisle: dict[str, list[tuple[str, int]]] = {}
+    for location_code, qty in session.execute(
+        sa.select(InventoryItem.location_code, InventoryItem.qty)
+        .where(
+            InventoryItem.warehouse_id == warehouse_id,
+            InventoryItem.snapshot_id == snapshot_id,
+            InventoryItem.material_code == material_code,
+            InventoryItem.batch_no == batch_no,
+        )
+        .order_by(InventoryItem.location_code)
+    ):
+        by_aisle.setdefault(aisle_of(location_code), []).append((location_code, qty))
+    return by_aisle
+
+
+def _material_locations_by_aisle(
+    session: Session,
+    *,
+    snapshot_id: int,
+    warehouse_id: str,
+    material_code: str,
+) -> dict[str, list[str]]:
+    """该物料的库存行按巷道聚合为**去重后的库位号列表**（每巷按库位号升序）。
+
+    缺口 2 的**目标库位**来源：目标巷道内该物料的既有库位，确定性取最低库位号。
+    """
+    by_aisle: dict[str, set[str]] = {}
+    for (location_code,) in session.execute(
+        sa.select(InventoryItem.location_code).where(
+            InventoryItem.warehouse_id == warehouse_id,
+            InventoryItem.snapshot_id == snapshot_id,
+            InventoryItem.material_code == material_code,
+        )
+    ):
+        by_aisle.setdefault(aisle_of(location_code), set()).add(location_code)
+    return {aisle: sorted(codes) for aisle, codes in by_aisle.items()}
+
+
+def _batch_locations_for_material(
+    session: Session,
+    *,
+    snapshot_id: int,
+    warehouse_id: str,
+    material_code: str,
+) -> dict[str, dict[str, list[tuple[str, int]]]]:
+    """该物料的库存行按「批号 → 巷道 → [(库位号, 箱数)]」聚合（每巷库位号升序）。
+
+    缺口 3 的**逐格库位来源**：出库顺路取要把每条被拣巷道下钻到具体库位号，
+    `derive_pick_sequence` 据此按 FIFO 批序 → 批内库位号升序消费真实库存行（不是
+    「巷道 + 固定后缀」的编造）。跳过 `batch_no IS NULL`（顺路取按批 FIFO，无批号行不参与）。
+    """
+    by_batch: dict[str, dict[str, list[tuple[str, int]]]] = {}
+    for batch_no, location_code, qty in session.execute(
+        sa.select(InventoryItem.batch_no, InventoryItem.location_code, InventoryItem.qty)
+        .where(
+            InventoryItem.warehouse_id == warehouse_id,
+            InventoryItem.snapshot_id == snapshot_id,
+            InventoryItem.material_code == material_code,
+        )
+        .order_by(InventoryItem.location_code, InventoryItem.batch_no)
+    ):
+        if batch_no is None:
+            continue
+        by_batch.setdefault(batch_no, {}).setdefault(aisle_of(location_code), []).append(
+            (location_code, qty)
+        )
+    return by_batch
+
+
+def _scattered_batches(
+    session: Session,
+    *,
+    snapshot_id: int,
+    warehouse_id: str,
+    material_code: str,
+    batch_threshold: int = DEFAULT_BATCH_CROSS_AISLE,
+) -> list[tuple[str, int, int]]:
+    """该物料在本快照里「同批跨巷道 > 阈值」的散批，按跨巷道数降序、批号升序。
+
+    返回 `(batch_no, cross_aisle, total_qty)`。发起移库（「按物料收拢散批」）的扇出单位
+    = 一散批一移库单（`15-04` §3.1 的「同批>3」口径）。`total_qty` 是箱数（源单位，与
+    `InventoryItem.qty` 同口径），只作单量落库，不在此处做板-格换算。
+    """
+    rows = session.execute(
+        sa.select(
+            InventoryItem.batch_no, InventoryItem.location_code, InventoryItem.qty
+        ).where(
+            InventoryItem.warehouse_id == warehouse_id,
+            InventoryItem.snapshot_id == snapshot_id,
+            InventoryItem.material_code == material_code,
+        )
+    )
+    aisles_by_batch: dict[str, set[str]] = {}
+    qty_by_batch: dict[str, int] = {}
+    for batch_no, location_code, qty in rows:
+        if batch_no is None:
+            continue
+        aisles_by_batch.setdefault(batch_no, set()).add(aisle_of(location_code))
+        qty_by_batch[batch_no] = qty_by_batch.get(batch_no, 0) + qty
+    scattered = [
+        (batch_no, len(aisles), qty_by_batch[batch_no])
+        for batch_no, aisles in aisles_by_batch.items()
+        if len(aisles) > batch_threshold
+    ]
+    scattered.sort(key=lambda item: (-item[1], item[0]))
+    return scattered
+
+
+def _next_relocate_order_no(session: Session, *, warehouse_id: str, now: datetime) -> str:
+    """移库任务号 `MV-{YYYYMMDD}-{NNN}`（当日递增，跨日不串号，`17` §4.1 的移库任务号）。
+
+    与 `next_bulk_batch_no` 同一取数纪律：日期前缀过滤落在 SQL 上、按仓过滤、读的是**已落库**
+    行。移库单只由「发起移库」产生，这里读当日已存在的号段取下一个空位即可。
+    """
+    prefix = f"MV-{now:%Y%m%d}-"
+    taken = {
+        row[0]
+        for row in session.execute(
+            sa.select(JobOrder.order_no).where(
+                JobOrder.warehouse_id == warehouse_id,
+                JobOrder.job_type == JobType.RELOCATE,
+                JobOrder.order_no.like(f"{prefix}%"),
+            )
+        )
+    }
+    seq = 1
+    while f"{prefix}{seq:03d}" in taken:
+        seq += 1
+    return f"{prefix}{seq:03d}"
+
+
+def _load_deviation(
+    session: Session, *, warehouse_id: str, deviation_id: str
+) -> Deviation:
+    """取偏离（发起移库的入参）：形状 + 存在 + 归属一并校验（与 `_load_order` 同口径）。"""
+    if not _ID_PATTERN.match(deviation_id):
+        raise ValidationBlocked(
+            f"偏离标识 {deviation_id!r} 的形状不合法 —— 本接口用 str(Deviation.id)",
+            detail={"deviation_id": deviation_id},
+        )
+    deviation = session.scalars(
+        sa.select(Deviation).where(
+            Deviation.warehouse_id == warehouse_id,
+            Deviation.id == int(deviation_id),
+        )
+    ).first()
+    if deviation is None:
+        raise ValidationBlocked(
+            f"偏离不存在或不属于本仓（{warehouse_id}）：{deviation_id}",
+            detail={"missing_deviation_ids": [int(deviation_id)]},
+        )
+    return deviation
 
 
 def _load_release_at(session: Session, *, warehouse_id: str, now: datetime) -> time:
@@ -406,24 +594,33 @@ def _require_locations(order: JobOrder, item: ConfirmItem) -> None:
     """按 `job_type` 校验库位字段的填法（`17` §4.3 台账矩阵）。
 
     入库只目标、出库「目标必空、源可空」（多巷无单一源库位，拣货路径走 `pick_path`，D4）、
-    移库两者都有。**判在报文层**：DB 的 `_LEDGER_LOCATION_CHECK` 会把「填错哪一格」拦成
-    `IntegrityError`（500），而这是调用方的报文错，应 422。`pick_path` 的缺失不在这里判 ——
-    由确认编排读该单当前方案回退（D4）。
+    移库「逐格源库位 `source_locations` 非空 + 目标库位」。**判在报文层**：DB 的
+    `_LEDGER_LOCATION_CHECK` 会把「填错哪一格」拦成 `IntegrityError`（500），而这是
+    调用方的报文错，应 422。`pick_path` 的缺失不在这里判 —— 由确认编排读该单当前方案
+    回退（D4）。
+
+    移库改判 `source_locations`（逐格真实源库位）而非单一 `source_location_code`：散落板跨
+    多个库位，只有一个源库位装不下真实搬出明细（缺口 2）；单一 `source_location_code` 保留
+    作台账行的代表库位，由 `confirm_relocate` 取逐格清单的最低库位号回填。
     """
     source = item.source_location_code
     target = item.target_location_code
     required = {
         JobType.INBOUND: ("target", source is None and target is not None),
         JobType.OUTBOUND: ("目标为空", target is None),
-        JobType.RELOCATE: ("both", source is not None and target is not None),
+        JobType.RELOCATE: (
+            "逐格源库位 + 目标",
+            bool(item.source_locations) and target is not None,
+        ),
     }[order.job_type]
     label, ok = required
     if ok:
         return
     raise ValidationBlocked(
         f"作业单 #{order.id}（{order.job_type.value}）的库位字段填法不合法 —— "
-        f"入库只填 target、出库 target 必空（源可空、拣货路径走 pick_path）、移库两者都填"
-        f"（当前 source={source!r}、target={target!r}）",
+        f"入库只填 target、出库 target 必空（源可空、拣货路径走 pick_path）、移库填逐格源库位"
+        f"（source_locations 非空）+ 目标（当前 source_locations="
+        f"{len(item.source_locations or [])} 格、target={target!r}）",
         detail={"job_order_id": str(order.id), "job_type": order.job_type.value},
     )
 
@@ -466,16 +663,19 @@ def _confirm_one(
                 else None
             ),
         )
+    # 移库台账的 `plan_json` 取该单当前收拢方案（含 target_aisle / expected_cross_aisle 等），
+    # 再叠加本次实际执行的逐格源库位 + 目标库位 —— 台账自包含、可审计。
+    current_plan = _current_consolidation_plan(session, order=order)
     return confirm_relocate(
         session,
         job_order=order,
         operator_id=operator_id,
         executed_at=executed_at,
-        source_location_code=item.source_location_code,
+        source_locations=[sl.model_dump() for sl in item.source_locations or []],
         target_location_code=item.target_location_code,
-        actual_qty=item.actual_qty,
         snapshot=snapshot,
         lock_version=item.lock_version,
+        plan_json=current_plan.payload_json if current_plan is not None else None,
     )
 
 
@@ -555,8 +755,10 @@ def batch_pick_sequence(
     session: Session = Depends(get_db),
     _authorized: None = Depends(require_permission(Permission.OUTBOUND_OPERATE)),
 ) -> BatchPickSequenceResponse:
-    """批量顺路取派生（design.md D2 / D3）：对一组 `OUTBOUND` 单按巷道聚合既有库存，
-    产出拣货顺序 + 加权集中度，写 `RecommendationPlan(plan_kind=PICK)` 并迁 `PLANNED`。
+    """批量顺路取派生（design.md D2 / D3）：对一组 `OUTBOUND` 单按批 FIFO、按巷集中、
+    封顶到订单交货量，产出拣货顺序 + 加权集中度，写 `RecommendationPlan(plan_kind=PICK)`
+    并迁 `PLANNED`；`order.batch_no` 回写 FIFO 最早批（出库单导入时留空，确认链写台账要
+    非空）。
 
     **只读派生**：不调 `engine.invoke`、不重新决定落位、不写台账/库存（D1）。步骤与失败面：
 
@@ -565,10 +767,11 @@ def batch_pick_sequence(
     3. **快照**：无快照 ⇒ 409（`BlockedMissingPrerequisite`，提示重新导入，不猜测）。
     4. **逐单派生**（D3 幂等键 = `bulk_batch_no` × 库存视图版本）：
        - `PENDING`：`profile.plates_by_aisle` 空 → 分列 `not_in_stock`（货未入库，停留
-         `PENDING`，不阻断）；否则派生、写方案、迁 `PLANNED`、回写 `bulk_batch_no`。
+         `PENDING`，不阻断）；否则派生、写方案、迁 `PLANNED`、回写 `bulk_batch_no` 与
+         `batch_no`（FIFO 最早批）。
        - `PLANNED`：读「当前方案」（`id` 最大的 `PICK` 行）—— 同版本返既有（幂等命中，
          不重复写、不重迁）；异版本（或无方案）重新派生并**追加**一行新方案（`id` 更大，
-         天然成为当前方案），不重迁状态。
+         天然成为当前方案），回写 `batch_no`、推进乐观锁，不重迁状态。
     5. **整批一次提交**（与 `allocate` 同口径）：纯派生 + 写方案，无台账/库存写，不存在
        「一半有方案一半没有」的中间态。
     """
@@ -600,6 +803,9 @@ def batch_pick_sequence(
     bulk_batch_no = next_bulk_batch_no(
         load_bulk_batch_nos(session, warehouse_id=payload.warehouse_id, now=now), now=now
     )
+    # 库位级取数按料号缓存：一料多单共享同一份「批号 → 巷道 → [(库位号, 箱数)]」，避免
+    # 逐单重复 SELECT（与 relocate 的 `material_locations_cache` 同手法）。
+    batch_locations_cache: dict[str, dict[str, dict[str, list[tuple[str, int]]]]] = {}
 
     # 4. 逐单派生（请求序）。纯派生 + 写方案，`now` 取一次；`bulk_batch_no` 只回写
     #    本批真正迁 `PLANNED` 的单。
@@ -607,10 +813,24 @@ def batch_pick_sequence(
     not_in_stock: list[str] = []
     for order in orders:
         profile = index.profile(order.material_code)
+        if order.material_code not in batch_locations_cache:
+            batch_locations_cache[order.material_code] = _batch_locations_for_material(
+                session,
+                snapshot_id=snapshot.id,
+                warehouse_id=order.warehouse_id,
+                material_code=order.material_code,
+            )
+        batch_locations_by_aisle = batch_locations_cache[order.material_code]
 
         if order.status is JobStatus.PLANNED:
             current = _current_pick_plan(session, order=order)
-            if current is not None and current.payload_json.get("snapshot_version") == snapshot_version:
+            if (
+                current is not None
+                and current.payload_json.get("snapshot_version") == snapshot_version
+                # 缺口 3 之前的旧方案缺 `locations`（只到巷道级），幂等命中须同格式，否则
+                # 走重派生追加一行当前格式（含库位级 `locations`）的新方案。
+                and _pick_plan_has_locations(current)
+            ):
                 # 幂等命中：同版本返既有方案，不重复写、不重迁状态（D3）。
                 plans.append(
                     PickPlanItem(
@@ -620,10 +840,17 @@ def batch_pick_sequence(
                     )
                 )
                 continue
-            # 视图推进（或无方案）：追加一行新方案，不重迁状态（已 PLANNED）。
+            # 视图推进（或无方案）：追加一行新方案，不重迁状态（已 PLANNED）。重派生后
+            # 顺路取的 FIFO 最早批可能随视图变了，回写 `batch_no`（确认链写台账要非空）。
             result = derive_pick_sequence(
-                material_code=order.material_code, do_no=order.order_no, profile=profile
+                material_code=order.material_code,
+                do_no=order.order_no,
+                profile=profile,
+                qty=order.qty,
+                batch_locations_by_aisle=batch_locations_by_aisle,
             )
+            order.batch_no = result.pop("batch_no")
+            bump_lock_version(order, expected=order.lock_version)
             payload_json = {**result, "snapshot_version": snapshot_version}
             row = RecommendationPlan(
                 warehouse_id=order.warehouse_id,
@@ -643,8 +870,15 @@ def batch_pick_sequence(
             not_in_stock.append(str(order.id))
             continue
         result = derive_pick_sequence(
-            material_code=order.material_code, do_no=order.order_no, profile=profile
+            material_code=order.material_code,
+            do_no=order.order_no,
+            profile=profile,
+            qty=order.qty,
+            batch_locations_by_aisle=batch_locations_by_aisle,
         )
+        # 顺路取派生 FIO 最早批 → 回写 `order.batch_no`（出库单导入时留空，确认链写台账
+        # 要求非空）。`batch_no` 不进方案 payload（17 §10.2 无此键，`PickSequence` extra=forbid）。
+        order.batch_no = result.pop("batch_no")
         payload_json = {**result, "snapshot_version": snapshot_version}
         row = RecommendationPlan(
             warehouse_id=order.warehouse_id,
@@ -729,6 +963,28 @@ def batch_relocate_plan(
     bulk_batch_no = next_bulk_batch_no(
         load_bulk_batch_nos(session, warehouse_id=payload.warehouse_id, now=now), now=now
     )
+    # 板-格换算的 `cartons_per_pallet` 在 `Material` 上（`InventoryProfile` 不携带），
+    # 按料号一次取全，逐单派生时传给 `derive_consolidation_plan`（D14 确认口径：箱 → 格）。
+    cartons_per_pallet_by_material: dict[str, int | None] = dict(
+        session.execute(
+            sa.select(Material.material_code, Material.cartons_per_pallet).where(
+                Material.warehouse_id == payload.warehouse_id,
+                Material.material_code.in_({order.material_code for order in orders}),
+            )
+        ).all()
+    )
+    # 「按物料收拢散批」的**物料级集中度**判据（缺口 1）：本批请求里同一物料的全部散批
+    # 批号集。一条非目标巷道只有当它的批号全部在此集内才数作「收拢后变空」—— 交织散批
+    # （GJP2571421/1322）单批收拢搬不空共享巷道，整料一并收拢才数得准。
+    moving_batches_by_material: dict[str, set[str]] = {}
+    for order in orders:
+        if order.batch_no is not None:
+            moving_batches_by_material.setdefault(order.material_code, set()).add(
+                order.batch_no
+            )
+    # 目标库位取数按料号缓存：一料多散批（多张移库单）共享同一份「物料 → 巷道 → 库位号」，
+    # 避免逐单重复 SELECT（D4「整批取数一次」）。
+    material_locations_cache: dict[str, dict[str, list[str]]] = {}
 
     # 4~5. 逐单派生（请求序）。纯派生 + 写方案，`now` 取一次；`bulk_batch_no` 只回写
     #      本批真正迁 `PLANNED` 的单。
@@ -743,6 +999,22 @@ def batch_relocate_plan(
             material_code=order.material_code,
             batch_no=order.batch_no,
         )
+        batch_locations_by_aisle = _batch_locations_by_aisle(
+            session,
+            snapshot_id=snapshot.id,
+            warehouse_id=order.warehouse_id,
+            material_code=order.material_code,
+            batch_no=order.batch_no,
+        )
+        if order.material_code not in material_locations_cache:
+            material_locations_cache[order.material_code] = _material_locations_by_aisle(
+                session,
+                snapshot_id=snapshot.id,
+                warehouse_id=order.warehouse_id,
+                material_code=order.material_code,
+            )
+        material_locations = material_locations_cache[order.material_code]
+        moving = moving_batches_by_material.get(order.material_code, set())
         available = _available_by_aisle(
             cap_rows,
             aisles=profile.plates_by_aisle,
@@ -756,8 +1028,14 @@ def batch_relocate_plan(
             if (
                 current is not None
                 and current.payload_json.get("snapshot_version") == snapshot_version
+                # 缺口 2 之前的旧方案缺 `source_locations` / `target_location`，而响应
+                # `ConsolidationPlan` 现已必填这两项 —— 旧方案原样回填会撞 Pydantic 必填
+                # 校验（500）。视为「格式过期」走重派生（下方追加一行当前格式的新方案），
+                # 不把旧形状塞进新契约。
+                and current.payload_json.get("source_locations")
+                and current.payload_json.get("target_location")
             ):
-                # 幂等命中：同版本返既有方案，不重复写、不重迁状态（D4）。
+                # 幂等命中：同版本且同格式，返既有方案，不重复写、不重迁状态（D4）。
                 plans.append(
                     RelocatePlanItem(
                         job_order_id=str(order.id),
@@ -773,6 +1051,10 @@ def batch_relocate_plan(
                 profile=profile,
                 batch_plates_by_aisle=batch_plates_by_aisle,
                 available=available,
+                cartons_per_pallet=cartons_per_pallet_by_material.get(order.material_code),
+                moving_batches=moving,
+                batch_locations_by_aisle=batch_locations_by_aisle,
+                material_locations_by_aisle=material_locations,
             )
             if result.plan is None:
                 moved_out.append(
@@ -802,6 +1084,10 @@ def batch_relocate_plan(
             profile=profile,
             batch_plates_by_aisle=batch_plates_by_aisle,
             available=available,
+            cartons_per_pallet=cartons_per_pallet_by_material.get(order.material_code),
+            moving_batches=moving,
+            batch_locations_by_aisle=batch_locations_by_aisle,
+            material_locations_by_aisle=material_locations,
         )
         if result.plan is None:
             moved_out.append(
@@ -943,10 +1229,161 @@ def list_deviation(
     """列出本仓的偏离批次清单（移库任务来源，`17` §4.4）。`status` 可选过滤。
 
     spec「偏离批次标记」：后验超标写入的 `Deviation` 在这里可查，操作员据此发起收拢。
-    聚合与分页属阶段六 KPI 看板，本端点只落「可查」（design.md D5）。
+    聚合与分页属阶段六 KPI 看板，本端点只落「可查」（design.md D5）。物料级偏离（批号空）
+    在此按当前快照补齐「明细批次号」`scattered_batches`（与 `start_relocate` 同口径），
+    让操作员在发起移库前就能看到会扇出哪些散批。
     """
+    # 「最新偏离批次表」：先按当前快照库存刷新物料级偏离的跨巷道数（出库 / 移库会改变
+    # 分布，不刷就停在过账前的旧值），再读。无快照时跳过刷新，仍返回存量偏离。
+    snapshot = _current_snapshot_or_none(session, warehouse_id=warehouse_id)
+    if snapshot is not None:
+        refresh_material_deviations(
+            session, warehouse_id=warehouse_id, snapshot_id=snapshot.id
+        )
+        session.commit()
+
     rows = kpi.list_deviations(session, warehouse_id=warehouse_id, status=status)
-    return [DeviationItem.model_validate(row) for row in rows]
+    # 品名从主数据补齐（`Deviation` 不落品名，`17` §4.4）；主数据未建时回退显示物料编码。
+    codes = {d.material_code for d in rows if d.material_code}
+    names = (
+        dict(
+            session.execute(
+                sa.select(Material.material_code, Material.material_name).where(
+                    Material.warehouse_id == warehouse_id,
+                    Material.material_code.in_(codes),
+                )
+            ).all()
+        )
+        if codes
+        else {}
+    )
+    items = [DeviationItem.model_validate(row) for row in rows]
+    # 明细批次号 = 当前快照里该物料的散批（同批跨巷道 > 阈值）。无快照时算不出，保持 None。
+    for item in items:
+        if item.material_code is not None:
+            item.material_name = names.get(item.material_code)
+        if item.batch_no is None and item.material_code is not None and snapshot is not None:
+            item.scattered_batches = [
+                ScatteredBatchItem(batch_no=batch_no, cross_aisle=cross_aisle, qty=qty)
+                for batch_no, cross_aisle, qty in _scattered_batches(
+                    session,
+                    snapshot_id=snapshot.id,
+                    warehouse_id=warehouse_id,
+                    material_code=item.material_code,
+                )
+            ]
+    return items
+
+
+@reads_router.post(
+    "/deviation/{deviation_id}/start-relocate", response_model=StartRelocateResponse
+)
+def start_relocate(
+    deviation_id: str,
+    payload: StartRelocateRequest,
+    session: Session = Depends(get_db),
+    _authorized: None = Depends(require_permission(Permission.RELOCATE_OPERATE)),
+) -> StartRelocateResponse:
+    """发起移库：把一条偏离批次物化成移库单（`Verification → Deviation → JobOrder`，`17` §4.4）。
+
+    「按物料收拢散批」（用户 2026-09-15 确认）：偏离是**物料级**事实（`actual_cross_aisle`
+    = 同物料跨巷道），扇出到该物料的每一批**散批**（同批跨巷道 > 阈值），一散批一张
+    `RELOCATE` 单（`PENDING`），收拢方案由 `POST /api/job/batch/relocate-plan` 后续派生。
+
+    守卫与失败面：
+
+    1. **偏离不存在 / 归属不对** ⇒ 422（`_load_deviation`）。
+    2. **已发起过移库** ⇒ 409（`StateConflict`，幂等：重复点「发起移库」不会二次建单）。
+    3. **无当前快照** ⇒ 409（`BlockedMissingPrerequisite`，散批按库存视图聚合，无快照即无
+       分布可读 —— 与「批量生成方案」同口径，不猜测）。
+    4. **无散批可收拢** ⇒ 409（`StateConflict`：该物料已无跨巷道超阈值的批，偏离或已
+       改善、或是物料级跨巷道的成因不在批号级散落，不做空扇出）。
+
+    事务边界：整批建单 + 迁移偏离状态一次提交（与 `allocate` / `relocate-plan` 同口径，
+    不存在「建了一半单、偏离却标了已发起」的中间态）。
+    """
+    now = datetime.now()
+
+    # 1~2. 取偏离 + 状态守卫（未处理才能发起，重复发起被幂等拦下）。
+    deviation = _load_deviation(
+        session, warehouse_id=payload.warehouse_id, deviation_id=deviation_id
+    )
+    if deviation.status is not DeviationStatus.OPEN:
+        raise StateConflict(
+            f"偏离 #{deviation.id} 已不是「未处理」（当前 {deviation.status.value}）——"
+            "不可重复发起移库",
+            detail={"deviation_id": deviation.id, "status": deviation.status.value},
+        )
+    if deviation.material_code is None:
+        raise ValidationBlocked(
+            f"偏离 #{deviation.id} 没有物料号，无从按物料收拢散批",
+            detail={"deviation_id": deviation.id},
+        )
+
+    # 3. 快照 + 取数。散批按当前库存视图聚合；无快照即无分布可读（不猜测）。
+    snapshot = _current_snapshot_or_none(session, warehouse_id=payload.warehouse_id)
+    if snapshot is None:
+        raise BlockedMissingPrerequisite(
+            f"仓库 {payload.warehouse_id} 没有任何快照基线 —— 阻断发起移库："
+            "请先导入库存快照（散批按库存视图聚合，无快照即无分布可读）"
+        )
+    scattered = _scattered_batches(
+        session,
+        snapshot_id=snapshot.id,
+        warehouse_id=payload.warehouse_id,
+        material_code=deviation.material_code,
+    )
+    if not scattered:
+        raise StateConflict(
+            f"物料 {deviation.material_code} 已无「同批跨巷道 > {DEFAULT_BATCH_CROSS_AISLE}"
+            "」的散批 —— 偏离或是物料级跨巷道的成因不在批号级散落，无需按物料扇出收拢",
+            detail={"deviation_id": deviation.id, "material_code": deviation.material_code},
+        )
+
+    # 物料主数据（物料名 / ABC 用于移库单展示与方案 cap 口径）。
+    material = session.scalars(
+        sa.select(Material).where(
+            Material.warehouse_id == payload.warehouse_id,
+            Material.material_code == deviation.material_code,
+        )
+    ).first()
+
+    # 4. 扇出：一散批一张移库单（PENDING）。`qty` = 该批箱数（源单位，板-格换算在方案侧）。
+    created: list[JobOrder] = []
+    for batch_no, cross_aisle, qty in scattered:
+        order = JobOrder(
+            warehouse_id=payload.warehouse_id,
+            order_no=_next_relocate_order_no(
+                session, warehouse_id=payload.warehouse_id, now=now
+            ),
+            line_no="10",
+            job_type=JobType.RELOCATE,
+            material_code=deviation.material_code,
+            material_name=material.material_name if material is not None else None,
+            qty=qty,
+            abc_class=material.abc_class if material is not None else None,
+            batch_no=batch_no,
+            status=JobStatus.PENDING,
+        )
+        session.add(order)
+        session.flush()
+        created.append(order)
+
+    # 5. 回写偏离：状态迁「已发起移库」+ 单数外键指向第一张单（`17` §4.4；其余单以
+    #    `material_code` + `batch_no` 在 `/api/jobs` 可查）。
+    deviation.status = DeviationStatus.RELOCATE_STARTED
+    deviation.relocate_job_order_id = created[0].id
+    session.commit()
+
+    return StartRelocateResponse(
+        deviation_id=str(deviation.id),
+        status=deviation.status,
+        created_job_order_ids=[str(order.id) for order in created],
+        scattered_batches=[
+            ScatteredBatchItem(batch_no=batch_no, cross_aisle=cross_aisle, qty=qty)
+            for batch_no, cross_aisle, qty in scattered
+        ],
+    )
 
 
 @reads_router.get("/jobs", response_model=list[JobQueueItem])

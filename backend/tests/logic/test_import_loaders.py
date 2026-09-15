@@ -17,7 +17,7 @@ import openpyxl
 import pytest
 
 from app.importer.detect import Detected, FileFormat, TextEncoding
-from app.importer.loaders import as_date, as_location_code, parse_rows
+from app.importer.loaders import as_date, as_datetime, as_location_code, parse_rows
 
 pytestmark = pytest.mark.logic
 
@@ -144,3 +144,51 @@ def test_date_missing_is_none() -> None:
 def test_date_garbage_raises() -> None:
     with pytest.raises(ValueError):
         as_date("not-a-date")
+
+
+# ------------------------------------------------------------------ as_datetime：库存记录时间归一
+
+def test_datetime_compact_yyyymmdd_text() -> None:
+    """WMS 导出的无分隔符 `20260915` 必须能解析（本次导入页 500 的真实根因）。"""
+    assert as_datetime("20260915") == datetime(2026, 9, 15)
+
+
+def test_datetime_compact_yyyymmddhhmmss_text() -> None:
+    """14 位紧凑日期时间。"""
+    assert as_datetime("20260915083000") == datetime(2026, 9, 15, 8, 30, 0)
+
+
+def test_datetime_compact_yyyymmdd_int() -> None:
+    """Excel 数字格把紧凑日期存成 int 20260915（非 Excel 序列号，序列号 2026 年约 46xxx）。"""
+    assert as_datetime(20260915) == datetime(2026, 9, 15)
+
+
+def test_datetime_serial_int_still_works() -> None:
+    """5 位整数仍是 Excel 序列号（45713 = 2025-02-25），不能被 8 位分支误吞。"""
+    assert as_datetime(45713) == datetime(2025, 2, 25)
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("2026-09-15 00:00:00", datetime(2026, 9, 15, 0, 0, 0)),
+        ("2026-09-15 08:30", datetime(2026, 9, 15, 8, 30)),
+        ("2026-09-15", datetime(2026, 9, 15)),
+        ("2026/09/15 08:30:00", datetime(2026, 9, 15, 8, 30, 0)),
+        ("2026/09/15", datetime(2026, 9, 15)),
+    ],
+)
+def test_datetime_separated_text_formats(text: str, expected: datetime) -> None:
+    assert as_datetime(text) == expected
+
+
+def test_datetime_datetime_and_date_passthrough() -> None:
+    assert as_datetime(datetime(2026, 9, 15, 7, 57)) == datetime(2026, 9, 15, 7, 57)
+    assert as_datetime(date(2026, 9, 15)) == datetime(2026, 9, 15, 0, 0)
+
+
+@pytest.mark.parametrize("bad", [None, "", "   ", "not-a-time", True, False])
+def test_datetime_invalid_raises(bad: object) -> None:
+    """必填列：空值 / 不可解析 / 布尔都抛 ValueError，由校验层转阻断、执行层落 FAILED。"""
+    with pytest.raises((ValueError, TypeError)):
+        as_datetime(bad)  # type: ignore[arg-type]

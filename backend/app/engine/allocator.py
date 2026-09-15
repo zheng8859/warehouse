@@ -109,15 +109,17 @@ __all__ = [
 def to_occupied_cells(qty: int, *, cartons_per_pallet: int | None = None) -> int:
     """本单占用的**格数** —— 「板-格」换算的**唯一**落点（D6）。
 
-    本阶段返回 `qty`（一单一位 = 一格 = 一板）。恒等不是占位符而是唯一与全部文档算例
-    自洽的读法：`14` §2.2 用「板」作巷道容量的单位、§3.5 的告警文案也是板、`08` §14.1
-    与 `CLAUDE.md` §十 的验收指标同样是板。真正的换算要 `JobOrder.qty`、`AisleCap` 的格、
-    `Material.cartons_per_pallet` 三处单位都定了才谈得上（D14 登记在案）。
+    D14 已确认（2026-09-15）：**1 板 = 1 格**，`qty` 单位是**箱**，每板箱数取
+    `Material.cartons_per_pallet`。故格数 = `ceil(qty / cartons_per_pallet)`
+    （不满一板仍占一整格）。
 
-    **`cartons_per_pallet` 现在就收进签名**，虽然当前不影响结果：换算规则到齐时只改这一个
-    函数体，而调用方**已经把材料参数递进来了** —— 若等到那时才加参数，每一处调用都要
-    回头改，改一处漏一处不会有任何东西报错。
+    `cartons_per_pallet` 缺失（`None` / 非正）时**退化为返回 `qty`**（一箱一格的保守
+    过估）：物料主数据未导入时不应让单子静默通过——但也不该因"不知道每板几箱"就把单子
+    直接判失败。过估会在 `feasible_aisles` 里把可行巷道收紧（容量不够的巷被排除），
+    有主数据的物料不受影响。调用方拿到主数据后换算即为精确值。
     """
+    if isinstance(cartons_per_pallet, int) and cartons_per_pallet > 0:
+        return (qty + cartons_per_pallet - 1) // cartons_per_pallet
     return qty
 
 

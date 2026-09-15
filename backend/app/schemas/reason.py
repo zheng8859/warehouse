@@ -4,7 +4,8 @@
   1. 推荐理由（入库）  job_id / aisles / factors{six} / scores / degraded / degrade_reason
   2. 顺路取顺序（出库）do_no / pick_sequence / weighted_concentration / threshold_n / exceeded
   3. 收拢方案（移库）  batch_no / material_code / from_aisles / target_aisle / plates /
-                       expected_cross_aisle{before,after} / batch_unchanged
+                       source_locations / target_location / expected_cross_aisle{before,after} /
+                       batch_unchanged
   4. 导入校验回执      session_id / data_time / files[{file_type,rows,fields_hit,anomalies,status}]
   5. cap 快照          snapshot_version / aisles[{aisle,total,reserved,usable,near_station}]
   6. KPI 卡片          period / weighted_concentration / same_material_cross_aisle /
@@ -260,6 +261,18 @@ class BatchAllocateResponse(BaseModel):
 
 # ------------------------------------------------------------------ 结构 2：顺路取顺序（17 §10.2）
 
+class PickLocation(BaseModel):
+    """顺路取序列里一个被拣的**库位号**（缺口 3：巷道级下钻到库位级）。
+
+    同巷多批时 `batch_no` 区分该库位出的是哪一批；`location_code` 是 6 位文本库位号
+    （前导 0 不得丢，CLAUDE.md §七）。`qty` 是箱数（源单位，与 `InventoryItem.qty` 同口径）。
+    """
+
+    location_code: str = Field(min_length=6, max_length=6)
+    qty: int = Field(ge=1)
+    batch_no: str = Field(min_length=1)
+
+
 class PickPathItem(BaseModel):
     """顺路取序列里的一条巷道（17 §10.2 的 `pick_sequence` 元素形）。
 
@@ -268,10 +281,14 @@ class PickPathItem(BaseModel):
     """
 
     aisle: str = Field(min_length=2, max_length=2)
-    #: 该巷拣货量（= 现状库存量，`derive_pick_sequence` 不跨巷分配）。
+    #: 该巷拣货量（`derive_pick_sequence` 按批 FIFO、按巷集中、封顶到订单交货量）。
     qty: int = Field(ge=0)
     #: 该巷批号集，升序（确定性）。
     batches: list[str] = Field(default_factory=list)
+    #: 该巷被拣的逐格库位（缺口 3：FIFO 批序 → 批内库位号升序），空 = 无库位级取数
+    #: （旧方案 / 未传 `batch_locations_by_aisle`）。只作「从哪个库位号出」的可视化与审计，
+    #: 不改 cap 扣减（扣减仍巷道级，`to_occupied_cells` 对巷道总量取整）。
+    locations: list[PickLocation] = Field(default_factory=list)
 
 
 class PickSequence(BaseModel):
@@ -340,8 +357,21 @@ class ConsolidationCrossAisle(BaseModel):
 
     #: 收拢前 = `InventoryProfile.cross_aisle_count`（该物料当前占用的巷道数）。
     before: int = Field(ge=0)
-    #: 收拢后 = `before` − 收拢后变空的 `from_aisle` 数（变空判据见 `_consolidate_to`）。
+    #: 收拢后 = `before` − 收拢后变空的巷道数（**物料级**口径，判据见 `_consolidate_to`）。
     after: int = Field(ge=0)
+
+
+class RelocateSourceLocation(BaseModel):
+    """收拢方案里**一个真实源库位**的搬出明细（`location_code` + 该格现有箱数 `qty`）。
+
+    执行侧（写台账 + cap 增量）按这个清单逐格扣减，取代「巷道 + 固定后缀」的占位库位 ——
+    库位号取自 `InventoryItem.location_code`（6 位文本），不是前端 / 编排编造。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    location_code: str = Field(min_length=6, max_length=6)
+    qty: int = Field(ge=1)
 
 
 class ConsolidationPlan(BaseModel):
@@ -364,6 +394,11 @@ class ConsolidationPlan(BaseModel):
     target_aisle: str = Field(min_length=1)
     #: 散落板总数 = `from_aisles` 板数之和（v1 板 = 格，与 `to_occupied_cells` 同口径）。
     plates: int = Field(ge=0)
+    #: 收拢搬出的真实源库位清单（逐格 `{location_code, qty}`，箱数）。方案必非空：收拢要
+    #: 搬出散落板，至少一格。执行侧据此逐格扣减，取代「巷道 + 固定后缀」的编造库位。
+    source_locations: list[RelocateSourceLocation] = Field(min_length=1)
+    #: 收拢目标的具体库位（6 位文本）：目标巷道内该物料的既有库位，确定性取最低库位号。
+    target_location: str = Field(min_length=6, max_length=6)
     expected_cross_aisle: ConsolidationCrossAisle
     #: 移库不改批号（CLAUDE.md §四）—— 结构性恒真，这里再钉一道。
     batch_unchanged: bool = True

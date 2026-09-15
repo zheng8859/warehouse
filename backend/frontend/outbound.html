@@ -85,7 +85,7 @@
         <div class="batchfoot">
           <span>预测平均加权集中度 <b id="avgConc">—</b></span>
           <span class="pill" id="planPill">未生成</span>
-          <button class="btn warn" id="batchConfirmBtn">批量确认出库（写【出库台账】）</button>
+          <button class="btn warn" id="batchConfirmBtn">过账（写【出库台账】）</button>
         </div>
       </div>
     </div>
@@ -101,11 +101,11 @@
     <!-- 二次确认卡（仅「批量确认出库」绑定） -->
     <div class="confirm-overlay hidden" id="confirmOverlay">
       <div class="confirm">
-        <div class="ch">二次确认 · 批量确认出库（写【出库台账】）</div>
+        <div class="ch">二次确认 · 过账（写【出库台账】）</div>
         <div class="cl" id="confirmSummary"><span>出库即写【出库台账】，请确认。</span></div>
         <div class="cbtn">
           <button class="btn ghost" id="confirmCancel">取消</button>
-          <button class="btn warn" id="confirmOk">确认出库</button>
+          <button class="btn warn" id="confirmOk">过账</button>
         </div>
       </div>
     </div>
@@ -260,6 +260,13 @@
     }
   }
 
+  // 顺路取巷道序 → 「巷道（库位号·库位号）」：如 01（010101·010102）。旧方案无 `locations`
+  // 时只显巷道号（向后兼容）。
+  function pickLabel(s) {
+    const locs = (s.locations || []).map(l => l.location_code);
+    return s.aisle + (locs.length ? '（' + locs.join('·') + '）' : '');
+  }
+
   function renderPlans() {
     if (!plans.length) {
       setState(planStatusEl, 'empty', { text: '本批无可生成顺路取的单（或均已被驳回）' });
@@ -282,7 +289,7 @@
 
     planBodyEl.innerHTML = plans.map((p, i) => {
       const row = orderByJob[p.job_order_id] || {};
-      const aisles = (p.pick_sequence || []).map(s => s.aisle).join(' → ');
+      const aisles = (p.pick_sequence || []).map(pickLabel).join(' → ');
       return '<tr data-index="' + i + '">'
         + '<td><b>' + esc(row.order_no || p.do_no) + '</b></td>'
         + '<td>' + esc(row.material_code) + '</td>'
@@ -322,7 +329,7 @@
     const seen = new Set(reordered.map(s => s.aisle));
     (plan.pick_sequence || []).forEach(s => { if (!seen.has(s.aisle)) reordered.push(s); });
     plan.pick_sequence = reordered;
-    el.closest('tr').querySelector('[data-pickseq]').textContent = reordered.map(s => s.aisle).join(' → ');
+    el.closest('tr').querySelector('[data-pickseq]').textContent = reordered.map(pickLabel).join(' → ');
   }
 
   async function rejectOne(plan, el) {

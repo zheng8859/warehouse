@@ -36,18 +36,20 @@ INV 的 `InventoryItem` **不在此 savepoint 内 flush**：其 `snapshot_id` �
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from datetime import date, datetime
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.cap.baseline import establish_baseline
+from app.cap.deviation import scan_material_deviations
 from app.core.enums import FileType, ImportStatus, JobType
 from app.core.errors import DomainError
 from app.core.import_state import assert_import_transition
+from app.importer.batch_no import generate_batch_no
 from app.importer.dedup import is_already_baselined
-from app.importer.loaders import as_location_code
+from app.importer.loaders import as_datetime, as_location_code
 from app.importer.mapping import MappingResult
 from app.importer.session import SourceFile, parse_source, passed_filenames
 from app.importer.validate import WAREHOUSE_ID
@@ -66,18 +68,6 @@ _JOB_TYPE_BY_FILE_TYPE: Mapping[FileType, JobType] = {
 #: 只分流为 JobOrder 的文件类型；INV 由 `split_inventory_items` 分流（快照 + cap 基线）。
 _JOB_FILE_TYPES = (FileType.PO, FileType.DO)
 
-#: 「库存记录时间」字符串的常见形态（CSV 导出）。
-_DATETIME_TEXT_FORMATS = ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d", "%Y/%m/%d")
-
-#: 文件类型 → 作业类型（16 A.4 #5：文件本身区分单据类型，源文件「类型」列不路由）。
-_JOB_TYPE_BY_FILE_TYPE: Mapping[FileType, JobType] = {
-    FileType.PO: JobType.INBOUND,
-    FileType.DO: JobType.OUTBOUND,
-}
-
-#: 本任务只分流 PO/DO；INV 由任务 3.2 分流（快照 + cap 基线）。
-_JOB_FILE_TYPES = (FileType.PO, FileType.DO)
-
 
 def split_job_orders(
     rows: Sequence[Mapping[str, Any]],
@@ -85,14 +75,18 @@ def split_job_orders(
     *,
     file_type: FileType,
     warehouse_id: str,
+    now: datetime,
 ) -> list[JobOrder]:
     """PO/DO 行 → JobOrder（PENDING）。纯函数：不落库、不迁移状态。
 
-    `job_type` 由 `FileType` 派生（16 A.4 #5）；`batch_no` 留空（PO/DO 模版没有批号列，
-    入库单的批号由系统在入库单建立时按生产批规则生成 —— `JobOrder.batch_no` 注释）；
-    `bulk_batch_no` 留空（导入入队时还没有批量 —— `JobOrder.bulk_batch_no` 注释）。
+    `job_type` 由 `FileType` 派生（16 A.4 #5）。`batch_no`：入库单（PO → INBOUND）在
+    建立时按生产批规则生成（D11，`generate_batch_no(now)`，同一批次共用同一批号）；
+    出库单（DO → OUTBOUND）留空（`JobOrder.batch_no` 注释：出库批号由顺路取从库存明细
+    里选出）。`bulk_batch_no` 留空（导入入队时还没有批量 —— `JobOrder.bulk_batch_no`
+    注释）。
     """
     job_type = _JOB_TYPE_BY_FILE_TYPE[file_type]
+    batch_no = generate_batch_no(now) if job_type is JobType.INBOUND else None
     orders: list[JobOrder] = []
     for row in rows:
         orders.append(
@@ -104,7 +98,7 @@ def split_job_orders(
                 material_code=_as_text(_value(row, mapping, "material_code")),
                 material_name=_as_optional_text(_value(row, mapping, "material_name")),
                 qty=_to_int(_value(row, mapping, "qty")),
-                batch_no=None,
+                batch_no=batch_no,
             )
         )
     return orders
@@ -140,7 +134,7 @@ def split_inventory_items(
                 production_date=None,
                 item_status=_as_text(_value(row, mapping, "item_status")),
                 qty=_to_int(_value(row, mapping, "qty")),
-                snapshot_time=_as_datetime(_value(row, mapping, "snapshot_time")),
+                snapshot_time=as_datetime(_value(row, mapping, "snapshot_time")),
             )
         )
     return items
@@ -152,6 +146,7 @@ def execute_import(
     files: Sequence[SourceFile],
     *,
     warehouse_id: str = WAREHOUSE_ID,
+    now: datetime | None = None,
 ) -> ImportSession:
     """`VALIDATED → IMPORTING → IMPORTED → [BASELINE]`，分流三类文件。
 
@@ -162,6 +157,8 @@ def execute_import(
     - PO/DO → JobOrder（`IMPORTING → IMPORTED`，savepoint 内）；INV → InventoryItem 并
       触发 `establish_baseline`（`IMPORTED → BASELINE`）。
     - 写入失败（唯一键冲突 / 业务校验）整体回滚该批，退回 `FAILED` —— 不产生半成品。
+    - `now`（可空）：入库单建立时的现场墙上时间，供批号生成（D11）取生产日期。缺省时
+      取 `datetime.now()`（朴素本地钟）；注入固定值以便测试钉住批号。
 
     返回**同一个** `session_row`（成功时 `BASELINE` 或 `IMPORTED`，失败时 `FAILED`），
     调用方按 `session_row.status` 区分。基线重算失败（`establish_baseline`）原样上抛，
@@ -179,8 +176,11 @@ def execute_import(
     # 只分流校验通过的文件（纯过滤，无 IO、不抛异常）。回执无逐文件结论时全部视为可导。
     importable = _importable_files(files, session_row.receipt_json)
 
+    if now is None:
+        now = datetime.now()  # 现场墙上时间（D17）：入库单建立当天，朴素本地钟
+
     try:
-        orders = _split_job_orders_from_files(importable, warehouse_id=warehouse_id)
+        orders = _split_job_orders_from_files(importable, warehouse_id=warehouse_id, now=now)
         items = _split_inventory_from_files(importable, warehouse_id=warehouse_id)
         with db.begin_nested():
             for order in orders:
@@ -188,9 +188,15 @@ def execute_import(
             session_row.status = assert_import_transition(session_row.status, ImportStatus.IMPORTED)
             session_row.imported_at = utcnow()
             db.flush()
-    except (DomainError, IntegrityError):
-        # savepoint 已整体回滚（载入的 JobOrder、IMPORTED 迁移都没了），退回 FAILED。
-        # 只收「执行失败」（唯一键冲突 / 解析探测等业务校验）；非预期异常原样上抛。
+    except (DomainError, IntegrityError, ValueError, TypeError):
+        # savepoint 已整体回滚（begin_nested 内出错时，载入的 JobOrder、IMPORTED 迁移都没
+        # 了）；纯解析阶段（begin_nested 之前）出错时外层事务只有一行 flush 的 IMPORTING。
+        # 两种情形 expire 回读都得到 IMPORTING，再走唯一回边到 FAILED。
+        #
+        # 收口范围：唯一键冲突 / 业务校验（DomainError、IntegrityError），以及行解析期的值
+        # 归一失败（ValueError / TypeError，如「库存记录时间」格式无法解析 —— 这本应在
+        # 校验层就被拦成 FAILED；此处是纵深防御，保证漏网的坏数据落 FAILED + 回执，而不是
+        # 冒泡成 HTTP 500）。其余非预期异常仍原样上抛，避免把真正的程序 bug 伪装成业务失败。
         db.expire(session_row)  # 内存态回数据库（savepoint 已回滚，DB 上是 IMPORTING）
         session_row.status = assert_import_transition(session_row.status, ImportStatus.FAILED)
         db.flush()
@@ -199,7 +205,11 @@ def execute_import(
     # INV 在场 → 建 cap 基线（IMPORTED → BASELINE）。items 不在上面的 savepoint 里落库，
     # 它的 snapshot_id 由 establish_baseline 建快照后回填（见模块 docstring「事务与回滚」）。
     if items:
-        establish_baseline(db, import_session=session_row, items=items)
+        snapshot = establish_baseline(db, import_session=session_row, items=items)
+        # 全量偏离扫描（18 §1.5「导入」触发路径）：基线建完，把同物料跨巷道超阈值的物料
+        # 全量落成物料级 Deviation（P6 偏离批次表 / P5 移库任务来源）。与基线同一事务，
+        # 不 commit —— 扫描失败随整批导入回滚。
+        scan_material_deviations(db, warehouse_id=warehouse_id, snapshot_id=snapshot.id)
     return session_row
 
 
@@ -220,7 +230,7 @@ def _importable_files(
 
 
 def _split_job_orders_from_files(
-    files: Sequence[SourceFile], *, warehouse_id: str
+    files: Sequence[SourceFile], *, warehouse_id: str, now: datetime
 ) -> list[JobOrder]:
     """把一批文件里 PO/DO 的行解析、映射并分流成 JobOrder（INV 跳过）。"""
     orders: list[JobOrder] = []
@@ -229,7 +239,9 @@ def _split_job_orders_from_files(
             continue
         rows, mapping = parse_source(source)
         orders.extend(
-            split_job_orders(rows, mapping, file_type=source.file_type, warehouse_id=warehouse_id)
+            split_job_orders(
+                rows, mapping, file_type=source.file_type, warehouse_id=warehouse_id, now=now
+            )
         )
     return orders
 
@@ -245,28 +257,6 @@ def _split_inventory_from_files(
         rows, mapping = parse_source(source)
         items.extend(split_inventory_items(rows, mapping, warehouse_id=warehouse_id))
     return items
-
-
-def _as_datetime(value: Any) -> datetime:
-    """把「库存记录时间」归一成 datetime。
-
-    `datetime` / `date` 直取（date → 零点）；字符串按 `_DATETIME_TEXT_FORMATS` 逐格式试。
-    解析不出抛 `ValueError` —— 口径异常，由 execute 的 savepoint 转成整批回退，而非静默
-    存一个假时点。
-    """
-    if isinstance(value, datetime):
-        return value
-    if isinstance(value, date):
-        return datetime.combine(value, datetime.min.time())
-    if isinstance(value, str):
-        text = value.strip()
-        for fmt in _DATETIME_TEXT_FORMATS:
-            try:
-                return datetime.strptime(text, fmt)
-            except ValueError:
-                continue
-        raise ValueError(f"无法解析库存记录时间：{value!r}")
-    raise ValueError(f"库存记录时间值类型不可归一：{type(value).__name__}")
 
 
 def _value(row: Mapping[str, Any], mapping: MappingResult, field: str) -> Any:

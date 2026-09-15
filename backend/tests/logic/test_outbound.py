@@ -9,13 +9,16 @@
 
 前半钉的是 `derive_pick_sequence`（纯函数）：
 
-  1. **现状分布**：`pick_sequence` 取自 `InventoryProfile.plates_by_aisle`（每巷库存量 =
-     拣货量，不跨巷分配）+ `batches_by_aisle`（每巷批号集），按 `aisle` 升序。
-  2. **加权集中度**复用 `concentration_aisle_count`（80% 降序累加），`threshold_n` 默认 5，
-     `exceeded = weighted_concentration > n`，仅高亮不阻断。
-  3. **空档案合法**：`plates_by_aisle` 空 → 空 `pick_sequence`、集中度 0（货未入库由端点
-     分列 `not_in_stock`，不是本函数的事）。
-  4. **确定性**：同样 profile 两次同输出（无随机、无大模型）。
+  1. **FIFO + 集中 + 封顶**：按批号升序（FIFO，批号字典序 = 生产日期序）逐批贪心，批内按
+     「单巷量从大到小、并列巷号升序」取巷，拣货量封顶到订单 `qty`；最早批多巷且各巷都够
+     交货量时只出一条巷。
+  2. **`batch_no` = FIFO 最早批**：结果里带 `batch_no`（端点回写 `order.batch_no`，
+     不进方案 payload）。
+  3. **加权集中度**复用 `concentration_aisle_count`（对拣货分布算 80% 降序累加），
+     `threshold_n` 默认 5，`exceeded = weighted_concentration > n`，仅高亮不阻断。
+  4. **空档案合法**：`qty_by_batch_by_aisle` 空 → 空 `pick_sequence`、`batch_no=None`、
+     集中度 0（货未入库由端点分列 `not_in_stock`，不是本函数的事）。
+  5. **确定性**：同样 profile + qty 两次同输出（无随机、无大模型）。
 
 后半钉的是 `_pick_qty_from_ledger`（出库后验的取数源）：
 
@@ -34,6 +37,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.enums import AccountStatus, JobStatus, JobType, LedgerType, Role, VerifyResult
+from app.core.errors import ValidationBlocked
 from app.engine.factors import InventoryProfile
 from app.models.identity import Account
 from app.models.job import JobOrder, Ledger, Verification
@@ -53,99 +57,287 @@ BATCH = "GJP2571221"
 
 def _profile(
     *,
-    plates: dict[str, int],
-    batches: dict[str, frozenset[str]] | None = None,
+    qty_by_batch_by_aisle: dict[str, dict[str, int]],
 ) -> InventoryProfile:
-    """按「每巷板数」直接造一份单料号档案；批号集缺省 = 该巷板数 > 0 就给一个批号。
+    """按「批号 → 巷道 → 数量」直接造一份单料号档案。
 
-    `derive_pick_sequence` 是纯函数，不读会话，故直接用 `InventoryProfile` 造数即可 ——
-    不必走 `make_scenario`（那是给读快照/写库的用例准备的）。
+    `derive_pick_sequence` 只读 `qty_by_batch_by_aisle`（FIFO 按批、按巷拆量），不读
+    `plates_by_aisle` / `batches_by_aisle`（那两处仍是分配因子的取数），故这里只给批号级
+    分布 —— 不必走 `make_scenario`（那是给读快照/写库的用例准备的）。
     """
-    if batches is None:
-        batches = {aisle: frozenset({f"B-{aisle}"}) for aisle in plates}
     return InventoryProfile(
         snapshot_present=True,
-        plates_by_aisle=plates,
-        batches_by_aisle=batches,
+        qty_by_batch_by_aisle=qty_by_batch_by_aisle,
     )
 
 
-def test_derive_aggregates_by_aisle_ascending() -> None:
-    """按巷道升序聚合每巷 qty + batches，do_no 原样带回。"""
-    profile = _profile(
-        plates={"03": 10, "01": 3, "02": 7},
-        batches={"03": frozenset({"B3"}), "01": frozenset({"B1"}), "02": frozenset({"B2"})},
-    )
+def test_derive_single_batch_single_aisle_caps_to_qty() -> None:
+    """单批单巷 100 板、交货 40 → 只拣 40，不把整份库存 dump 成拣货量。"""
+    profile = _profile(qty_by_batch_by_aisle={"GJP2571221": {"01": 100}})
 
-    result = derive_pick_sequence(material_code=MATERIAL, do_no=DO_NO, profile=profile)
+    result = derive_pick_sequence(
+        material_code=MATERIAL, do_no=DO_NO, profile=profile, qty=40
+    )
 
     assert result["do_no"] == DO_NO
+    assert result["batch_no"] == "GJP2571221"
     assert result["pick_sequence"] == [
-        {"aisle": "01", "qty": 3, "batches": ["B1"]},
-        {"aisle": "02", "qty": 7, "batches": ["B2"]},
-        {"aisle": "03", "qty": 10, "batches": ["B3"]},
+        {"aisle": "01", "qty": 40, "batches": ["GJP2571221"], "locations": []}
     ]
 
 
-def test_derive_batches_sorted_for_determinism() -> None:
-    """同一巷多个批号 → batches 升序（frozenset 无序，排序保证确定性）。"""
+def test_derive_fifo_earliest_batch_picked_first() -> None:
+    """最早批在 01 巷、较新批在 02 巷：交货 5 → 只从最早批拣，`batch_no` = 最早批。"""
     profile = _profile(
-        plates={"01": 5},
-        batches={"01": frozenset({"B-C", "B-A", "B-B"})},
+        qty_by_batch_by_aisle={
+            "GJP2571221": {"01": 10},  # 最早批
+            "GJP2690871": {"02": 100},  # 较新批
+        }
     )
 
-    result = derive_pick_sequence(material_code=MATERIAL, do_no=DO_NO, profile=profile)
+    result = derive_pick_sequence(
+        material_code=MATERIAL, do_no=DO_NO, profile=profile, qty=5
+    )
 
-    assert result["pick_sequence"][0]["batches"] == ["B-A", "B-B", "B-C"]
+    assert result["batch_no"] == "GJP2571221"
+    assert result["pick_sequence"] == [
+        {"aisle": "01", "qty": 5, "batches": ["GJP2571221"], "locations": []}
+    ]
 
 
-def test_derive_weighted_concentration_and_not_exceeded() -> None:
-    """60/25/10/5 → 80% 的 100 是 80：60 不够、加 25 到 85 够 → 覆盖 2 巷道，未超标。"""
-    profile = _profile(plates={"01": 60, "02": 25, "03": 10, "04": 5})
+def test_derive_single_aisle_when_earliest_batch_in_multiple_sufficient_aisles() -> None:
+    """最早批在两条巷、每巷都够交货量 → 只显示一条巷（单巷量大者、并列取巷号小）。"""
+    profile = _profile(qty_by_batch_by_aisle={"GJP2571221": {"01": 100, "02": 100}})
 
-    result = derive_pick_sequence(material_code=MATERIAL, do_no=DO_NO, profile=profile)
+    result = derive_pick_sequence(
+        material_code=MATERIAL, do_no=DO_NO, profile=profile, qty=50
+    )
 
-    assert result["weighted_concentration"] == 2
+    assert result["batch_no"] == "GJP2571221"
+    assert result["pick_sequence"] == [
+        {"aisle": "01", "qty": 50, "batches": ["GJP2571221"], "locations": []}
+    ]
+
+
+def test_derive_continues_to_next_batch_when_earliest_insufficient() -> None:
+    """最早批 30+3=33 不足交货 50 → 顺延下一批（仍 FIFO），`batch_no` 仍是最近早批。"""
+    profile = _profile(
+        qty_by_batch_by_aisle={
+            "GJP2571221": {"01": 30, "02": 3},
+            "GJP2571321": {"03": 100},
+        }
+    )
+
+    result = derive_pick_sequence(
+        material_code=MATERIAL, do_no=DO_NO, profile=profile, qty=50
+    )
+
+    assert result["batch_no"] == "GJP2571221"
+    assert result["pick_sequence"] == [
+        {"aisle": "01", "qty": 30, "batches": ["GJP2571221"], "locations": []},
+        {"aisle": "02", "qty": 3, "batches": ["GJP2571221"], "locations": []},
+        {"aisle": "03", "qty": 17, "batches": ["GJP2571321"], "locations": []},
+    ]
+
+
+def test_derive_merges_same_aisle_across_batches() -> None:
+    """最早批 10 板在 01 巷、次批也在 01 巷（量更大）：同巷合并成一条，批号升序。"""
+    profile = _profile(
+        qty_by_batch_by_aisle={
+            "GJP2571221": {"01": 10},
+            "GJP2571321": {"01": 100, "02": 100},
+        }
+    )
+
+    result = derive_pick_sequence(
+        material_code=MATERIAL, do_no=DO_NO, profile=profile, qty=50
+    )
+
+    assert result["batch_no"] == "GJP2571221"
+    assert result["pick_sequence"] == [
+        {
+            "aisle": "01",
+            "qty": 50,
+            "batches": ["GJP2571221", "GJP2571321"],
+            "locations": [],
+        }
+    ]
+
+
+def test_derive_resolves_locations_fifo_then_location_order() -> None:
+    """缺口 3：传入 `batch_locations_by_aisle` 时把每条被拣巷道下钻到逐格库位号。
+
+    FIFO 批序 → 批内库位号升序逐个消费，末巷/末格按拣货量截断。例子即交付说明的 DO-88：
+    最早批 `GJP2509011` 巷01=60（010101·30 / 010102·30）、巷02=50（020101·50），交货 100
+    → 巷01 拣 60、巷02 拣 40，库位逐格 010101·30 / 010102·30 / 020101·40。
+    """
+    profile = _profile(
+        qty_by_batch_by_aisle={
+            "GJP2509011": {"01": 60, "02": 50},
+            "GJP2509022": {"01": 40},
+        }
+    )
+
+    result = derive_pick_sequence(
+        material_code=MATERIAL,
+        do_no=DO_NO,
+        profile=profile,
+        qty=100,
+        batch_locations_by_aisle={
+            "GJP2509011": {"01": [("010101", 30), ("010102", 30)], "02": [("020101", 50)]},
+            "GJP2509022": {"01": [("010103", 40)]},
+        },
+    )
+
+    assert result["batch_no"] == "GJP2509011"
+    assert result["pick_sequence"] == [
+        {
+            "aisle": "01",
+            "qty": 60,
+            "batches": ["GJP2509011"],
+            "locations": [
+                {"location_code": "010101", "qty": 30, "batch_no": "GJP2509011"},
+                {"location_code": "010102", "qty": 30, "batch_no": "GJP2509011"},
+            ],
+        },
+        {
+            "aisle": "02",
+            "qty": 40,
+            "batches": ["GJP2509011"],
+            "locations": [
+                {"location_code": "020101", "qty": 40, "batch_no": "GJP2509011"},
+            ],
+        },
+    ]
+
+
+def test_derive_resolves_locations_truncates_single_cell() -> None:
+    """单库位 10 箱但只拣 5 → 该库位 `qty` 截断为 5，不把整格库存 dump 成拣货量。"""
+    profile = _profile(qty_by_batch_by_aisle={"GJP2571221": {"01": 5}})
+
+    result = derive_pick_sequence(
+        material_code=MATERIAL,
+        do_no=DO_NO,
+        profile=profile,
+        qty=5,
+        batch_locations_by_aisle={"GJP2571221": {"01": [("010101", 10)]}},
+    )
+
+    assert result["pick_sequence"] == [
+        {
+            "aisle": "01",
+            "qty": 5,
+            "batches": ["GJP2571221"],
+            "locations": [{"location_code": "010101", "qty": 5, "batch_no": "GJP2571221"}],
+        }
+    ]
+
+
+def test_derive_resolves_locations_across_batches_in_fifo_order() -> None:
+    """同巷多批合并：`locations` 按 FIFO 批序展开，批号各自标注。"""
+    profile = _profile(
+        qty_by_batch_by_aisle={
+            "GJP2571221": {"01": 10},
+            "GJP2571321": {"01": 100},
+        }
+    )
+
+    result = derive_pick_sequence(
+        material_code=MATERIAL,
+        do_no=DO_NO,
+        profile=profile,
+        qty=50,
+        batch_locations_by_aisle={
+            "GJP2571221": {"01": [("010101", 10)]},
+            "GJP2571321": {"01": [("010102", 100)]},
+        },
+    )
+
+    assert result["pick_sequence"] == [
+        {
+            "aisle": "01",
+            "qty": 50,
+            "batches": ["GJP2571221", "GJP2571321"],
+            "locations": [
+                {"location_code": "010101", "qty": 10, "batch_no": "GJP2571221"},
+                {"location_code": "010102", "qty": 40, "batch_no": "GJP2571321"},
+            ],
+        }
+    ]
+
+
+def test_derive_weighted_concentration_on_capped_pick() -> None:
+    """拣货分布 974 / 43 / 3 → 80% 的 816 被 974 一条覆盖 → 集中度 1，不超 N。"""
+    profile = _profile(
+        qty_by_batch_by_aisle={
+            "GJP2571221": {"01": 43, "02": 3},
+            "GJP2571321": {"03": 974},
+        }
+    )
+
+    result = derive_pick_sequence(
+        material_code=MATERIAL, do_no=DO_NO, profile=profile, qty=1020
+    )
+
+    assert result["weighted_concentration"] == 1
     assert result["threshold_n"] == 5
     assert result["exceeded"] is False
 
 
 def test_derive_exceeded_highlights_only() -> None:
-    """7 巷道各 10 板 → 80% 的 56 需累加 6 条巷道 → 6 > 5，`exceeded=True`（仅高亮）。"""
-    profile = _profile(plates={f"0{i}": 10 for i in range(1, 8)})
+    """交货量跨 7 条巷道、每条 10 板 → 80% 需 6 条巷 → 6 > 5，仅高亮不阻断。"""
+    profile = _profile(
+        qty_by_batch_by_aisle={f"GJP25712{i}{i}": {f"0{i}": 10} for i in range(1, 8)}
+    )
 
-    result = derive_pick_sequence(material_code=MATERIAL, do_no=DO_NO, profile=profile)
+    result = derive_pick_sequence(
+        material_code=MATERIAL, do_no=DO_NO, profile=profile, qty=70
+    )
 
     assert result["weighted_concentration"] == 6
     assert result["exceeded"] is True
 
 
 def test_derive_empty_profile_is_empty_sequence() -> None:
-    """空档案（货未入库）→ 空 pick_sequence、集中度 0、不超标（不 crash）。"""
-    profile = _profile(plates={})
+    """空档案（货未入库）→ 空 pick_sequence、`batch_no=None`、集中度 0。"""
+    profile = _profile(qty_by_batch_by_aisle={})
 
-    result = derive_pick_sequence(material_code=MATERIAL, do_no=DO_NO, profile=profile)
+    result = derive_pick_sequence(
+        material_code=MATERIAL, do_no=DO_NO, profile=profile, qty=10
+    )
 
     assert result["pick_sequence"] == []
+    assert result["batch_no"] is None
     assert result["weighted_concentration"] == 0
     assert result["exceeded"] is False
 
 
 def test_derive_deterministic() -> None:
-    """同样 profile 两次同输出（「同样输入必得同样输出」）。"""
-    profile = _profile(plates={"01": 3, "02": 7})
+    """同样 profile + qty 两次同输出（「同样输入必得同样输出」）。"""
+    profile = _profile(
+        qty_by_batch_by_aisle={
+            "GJP2571221": {"01": 30, "02": 3},
+            "GJP2571321": {"03": 100},
+        }
+    )
 
-    first = derive_pick_sequence(material_code=MATERIAL, do_no=DO_NO, profile=profile)
-    second = derive_pick_sequence(material_code=MATERIAL, do_no=DO_NO, profile=profile)
+    first = derive_pick_sequence(
+        material_code=MATERIAL, do_no=DO_NO, profile=profile, qty=50
+    )
+    second = derive_pick_sequence(
+        material_code=MATERIAL, do_no=DO_NO, profile=profile, qty=50
+    )
 
     assert first == second
 
 
 def test_derive_default_threshold_n() -> None:
     """未传 n → `threshold_n` 取 `DEFAULT_CONCENTRATION_N`（5）。"""
-    profile = _profile(plates={"01": 3})
+    profile = _profile(qty_by_batch_by_aisle={"GJP2571221": {"01": 3}})
 
-    result = derive_pick_sequence(material_code=MATERIAL, do_no=DO_NO, profile=profile)
+    result = derive_pick_sequence(
+        material_code=MATERIAL, do_no=DO_NO, profile=profile, qty=3
+    )
 
     assert result["threshold_n"] == 5
 
@@ -345,3 +537,45 @@ def test_verify_outbound_missing_path_and_source_verify_failed(session: Session)
 
     assert result.status is JobStatus.VERIFY_FAILED
     assert _verification(session, order) is None
+
+
+# ------------------------------------------------------------------ 拣货量不足订单量 → 阻断过账
+
+def test_confirm_outbound_blocks_when_pick_short_of_order(session: Session) -> None:
+    """拣货路径总量 < 订单量 → `ValidationBlocked` 阻断，不写台账、不扣库存。
+
+    Problem（P6 KPI / 用户提的 1）：出货单 20250530 已过账 10200 箱但顺路取只覆盖 834 箱。
+    根因：`derive_pick_sequence` 只在可用库存里封顶、不标「库存不足」（`exceeded` 是加权
+    集中度 > 5 巷，与库存是否充足无关），确认编排若不拦，台账会按满额 `job_order.qty`
+    记出库、扣减却按拣货路径扣，账实不一致。这里钉住「库存不足不得带病过账」。
+    """
+    operator = _operator(session)
+    scenario = make_scenario(
+        session,
+        inventory=[InventorySpec("010101", MATERIAL, BATCH, 40)],
+        job_orders=[
+            JobOrderSpec(
+                order_no="DO-88",
+                material_code=MATERIAL,
+                qty=100,
+                batch_no=BATCH,
+                job_type=JobType.OUTBOUND,
+                status=JobStatus.PLANNED,
+            )
+        ],
+    )
+    order = scenario.job_orders[0]
+
+    with pytest.raises(ValidationBlocked):
+        confirm_outbound(
+            session,
+            job_order=order,
+            operator_id=operator.id,
+            executed_at=NOW,
+            pick_path_json=[{"aisle": "01", "qty": 40, "batches": [BATCH]}],
+            snapshot=scenario.snapshot,
+        )
+
+    # 阻断：状态停在 PLANNED、零台账（未确认不产生台账，CLAUDE.md §四）。
+    assert order.status is JobStatus.PLANNED
+    assert session.scalars(select(Ledger)).all() == []

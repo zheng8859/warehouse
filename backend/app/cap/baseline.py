@@ -8,18 +8,27 @@
 
 ## 四条口径（唯一一处实现，`reserved.py` 只读不重算）
 
-  1. **cap_physical** = 巷道内**去重库位格数**（主数据到位前 = 快照库位去重格数近似，D5）。
-  2. **cap_total**    = cap_physical − 已占格数。
+  1. **cap_physical** = 巷道物理总格数，取巷道主数据 `Aisle.total_cells`（`17` §2.1）；
+     主数据缺失（无该行或 `total_cells IS NULL`）时退化为「快照去重库位格数」近似（D5），
+     退化时 `cap_total` 恒为 0 —— 那是「主数据未到位」的明确信号，不是真实容量。
+  2. **cap_total**    = cap_physical − 已占格数（**允许为负**：占用超过权威总格数是要被
+     `CapAlert` 发现的异常，夹成 0 会把超仓藏起来；`cap_usable` 才做非负夹取）。
   3. **cap_reserved** = cap_physical × 40%（固定预留带，**仅近站台巷道非零**）。
   4. **cap_usable**   = max(cap_total − cap_reserved, 0)（非 A 类可用）。
 
-## 已占格数的占位（本 change 的已知退化，D14 确认后单列修正）
+## 已占格数（D14 已确认：1 板 = 1 格，2026-09-15 业务确认）
 
-「已占格数」本 change 以「有库存的库位去重格数」近似（design.md 风险表）。快照里每行
-qty > 0（`InventoryItem` 的 `qty_positive` CHECK），故「有库存库位去重格数」恒等于
-「库位去重格数」→ **cap_total 恒为 0**。这是占位不是结论：板-格换算（D14）确认后，
-`aggregate_aisle_caps` 里的 `occupied_cells` 改为 `Σ to_occupied_cells(qty)`，cap_total
-随之不再恒为 0。占位落在这里、不落在调用方，是为了让「改一处就能修正」成立。
+快照粒度是「库位 × 批号 × 料号」（`uq_inventory_items_snapshot_location_batch_material`），
+而一个物理库位就是一格、放 1 板 —— 真实导出 10578 行 / 10562 个去重库位，基本一库位一行
+（数量列单位是**箱**，满板量即品名标注的「N/板」，箱数多少不改变占用格数；同库位多批/
+多料混挂时仍只占 1 格，如虚拟库位 `000000` 17 行算 1 格）。故 **已占格数 = 快照中有
+库存的去重库位数**，不按 qty 折算。
+
+## cap 行的巷道全集 = 快照巷道 ∪ 主数据巷道
+
+引擎可行巷道集是「主数据 ∩ cap 行」（`scoring.feasible_aisles`）：若只为「快照里有库存」
+的巷道出行，空巷（占用 0、容量最大）永远进不了入库候选。故主数据给出了 `total_cells`
+的巷道即使本快照零库存也出行（occupied = 0）。主数据缺失时退化为只出快照巷道（旧行为）。
 
 ## 建立基线的失败契约（无 `IMPORTED → FAILED` 回边）
 
@@ -49,11 +58,13 @@ from app.core.errors import DomainError
 from app.core.import_state import assert_import_transition
 from app.models.base import utcnow
 from app.models.linkage import AisleCap, ImportSession, InventoryItem, Snapshot
+from app.models.master_data import Aisle
 
 __all__ = [
     "DEFAULT_RESERVE_RATIO",
     "aggregate_aisle_caps",
     "establish_baseline",
+    "load_aisle_master",
     "next_snapshot_version",
     "recompute_snapshot_caps",
 ]
@@ -88,6 +99,25 @@ def _reserved_cells(cap_physical: int, ratio: float) -> int:
     )
 
 
+def load_aisle_master(
+    session: Session, *, warehouse_id: str
+) -> tuple[dict[str, int | None], dict[str, bool | None]]:
+    """读巷道主数据（`17` §2.1）→ `(physical_cells, is_near_station)` 两个映射。
+
+    键 = 巷道号；`total_cells` / `is_near_station` 均可空（NULL 原样保留，调用方按
+    三态处理）。无主数据时两个字典都为空 —— 调用方据此走 D5 退化，不编造规模。
+    """
+    rows = session.execute(
+        select(Aisle.aisle_no, Aisle.total_cells, Aisle.is_near_station).where(
+            Aisle.warehouse_id == warehouse_id
+        )
+    ).all()
+    return (
+        {aisle_no: total_cells for aisle_no, total_cells, _ in rows},
+        {aisle_no: near for aisle_no, _, near in rows},
+    )
+
+
 def aggregate_aisle_caps(
     items: Iterable[InventoryItem],
     *,
@@ -95,8 +125,15 @@ def aggregate_aisle_caps(
     snapshot_id: int,
     reserve_ratio: float = DEFAULT_RESERVE_RATIO,
     is_near_station: Mapping[str, bool | None] | None = None,
+    physical_cells: Mapping[str, int | None] | None = None,
 ) -> list[AisleCap]:
     """按巷道（库位号 `[:2]`）聚合库存行为 `AisleCap`（**纯函数，无 IO**）。
+
+    `physical_cells` 是巷道号 → 物理总格数的主数据映射（`Aisle.total_cells`）：给出
+    **正整数**的巷道按权威总格数算 `cap_physical`；缺键 / `None` / 非正 → 退化为该巷
+    快照去重库位格数（D5，此时 `cap_total` 恒 0）。主数据里有总格数、但本快照零库存
+    的**空巷也出行**（occupied = 0）—— 引擎可行集是「主数据 ∩ cap 行」，空巷不出库
+    就永远进不了入库候选（见模块 docstring「cap 行的巷道全集」）。
 
     `is_near_station` 是巷道号 → 是否近站台的字典，缺键即 `None`（未导出，不得当
     `False` 用，16 §3.4）。`cap_reserved` 只在 `is_near_station is True` 时非零；
@@ -106,17 +143,31 @@ def aggregate_aisle_caps(
     返回按 `aisle_no` 升序排列（确定性：同样输入必得同样输出，CLAUDE.md §四）。
     """
     near = is_near_station or {}
+    physical_map = physical_cells or {}
     by_aisle: dict[str, set[str]] = {}
     for item in items:
         by_aisle.setdefault(item.location_code[:2], set()).add(item.location_code)
 
+    # 巷道全集 = 快照有库存的巷道 ∪ 主数据给出权威总格数的巷道（空巷 occupied=0）。
+    universe = set(by_aisle) | {
+        aisle_no
+        for aisle_no, cells in physical_map.items()
+        if isinstance(cells, int) and cells > 0
+    }
+
     caps: list[AisleCap] = []
-    for aisle_no in sorted(by_aisle):
-        locations = by_aisle[aisle_no]
-        cap_physical = len(locations)
-        # 已占格数占位：design.md 风险表「以有库存的库位去重格数近似」→ 与 cap_physical
-        # 相等，cap_total 恒为 0。D14 确认板-格换算后，这里改 Σ to_occupied_cells(qty)。
+    for aisle_no in sorted(universe):
+        locations = by_aisle.get(aisle_no, set())
+        # 已占格数：1 板 = 1 格（D14，2026-09-15 确认）→ 有库存的去重库位数，不按 qty
+        # 折算（同库位多批/多料只占 1 格）。
         occupied_cells = len(locations)
+        master_cells = physical_map.get(aisle_no)
+        cap_physical = (
+            master_cells
+            if isinstance(master_cells, int) and master_cells > 0
+            else occupied_cells
+        )
+        # 允许为负：占用超过权威总格数是要被 CapAlert 发现的超仓异常，不在这里夹零。
         cap_total = cap_physical - occupied_cells
         cap_reserved = _reserved_cells(cap_physical, reserve_ratio) if near.get(aisle_no) is True else 0
         cap_usable = max(cap_total - cap_reserved, 0)
@@ -173,6 +224,7 @@ def establish_baseline(
     items: Iterable[InventoryItem],
     reserve_ratio: float = DEFAULT_RESERVE_RATIO,
     is_near_station: Mapping[str, bool | None] | None = None,
+    physical_cells: Mapping[str, int | None] | None = None,
 ) -> Snapshot:
     """把一批 `IMPORTED` 会话的库存快照固化为新基线（`IMPORTED → BASELINE`，17 §3.2）。
 
@@ -180,6 +232,9 @@ def establish_baseline(
     → 落 `AisleCap` → 回写会话三列（`status=BASELINE` / `snapshot_version_no` /
     `baselined_at`）→ 冻结 `cap_snapshot_json`。任一步失败 savepoint 整体回滚，不产生
     半成品基线（spec「重算异常回滚并提示重导」）。
+
+    `physical_cells` / `is_near_station` **默认 `None` → 从巷道主数据 `Aisle` 读**
+    （生产路径，execute 导入即如此）；显式传入则用传入值（纯函数式单测走这条）。
 
     **入口守卫在 try 之外**（与 `confirm.py` 同构）：源状态非 `IMPORTED` 是「调用方过期」，
     直接 `StateConflict` 上抛、零写入，不进入 savepoint。重算失败（try 内）则回滚 +
@@ -193,6 +248,15 @@ def establish_baseline(
     # 的隐式 flush 会把它写进外层事务，失败回滚就撤不掉这个状态（本测试即栽在这里）。
     assert_import_transition(import_session.status, ImportStatus.BASELINE)
     version_no = next_snapshot_version(session, warehouse_id=import_session.warehouse_id)
+
+    if physical_cells is None or is_near_station is None:
+        master_physical, master_near = load_aisle_master(
+            session, warehouse_id=import_session.warehouse_id
+        )
+        if physical_cells is None:
+            physical_cells = master_physical
+        if is_near_station is None:
+            is_near_station = master_near
 
     try:
         with session.begin_nested():
@@ -211,6 +275,7 @@ def establish_baseline(
                 snapshot_id=snapshot.id,
                 reserve_ratio=reserve_ratio,
                 is_near_station=is_near_station,
+                physical_cells=physical_cells,
             )
             session.add_all(caps)
 
@@ -241,12 +306,13 @@ def recompute_snapshot_caps(
     """对**已有快照**的 cap 就地重算（漂移校正，16 §6.4「以快照重算值为准」）。
 
     与 `establish_baseline` 的区别：后者「新建快照 + 建 cap」，本函数「同一快照已存在，
-    把它的 `AisleCap` 按快照库位去重再算一遍」。用于校正被手工 / 程序改坏的 cap
-    （漂移），**不产生新快照版本、不迁移会话状态** —— 快照是权威，重算只把派生值拉回
-    权威口径。
+    把它的 `AisleCap` 按快照库存 + **最新巷道主数据**再算一遍」。用于校正被手工 / 程序
+    改坏的 cap（漂移，16 §6.4），也用于主数据补齐（如 `total_cells` 从历史观测导出后）
+    刷新既有快照 —— **不产生新快照版本、不迁移会话状态**。
 
-    保留既有 `is_near_station` 三态（NULL 仍是 NULL）：那是巷道主数据属性，不随 cap
-    数值重算而变 —— 只有 cap_physical/total/reserved/usable 由快照重算。
+    `cap_physical` 与 `is_near_station` 以**当前巷道主数据为准**；主数据没有的巷道，
+    physical 退化为快照去重格数、near 沿用旧 cap 行的三态（NULL 仍是 NULL）—— 主数据
+    未导出的属性不借重算之名被编造。
 
     旧 `AisleCap` 先 `delete` + `flush` 再写新行：新行与旧行同 `(warehouse_id,
     snapshot_id, aisle_no)`，SQLAlchemy 默认 INSERT 先于 DELETE 落库，会在唯一约束上
@@ -255,13 +321,15 @@ def recompute_snapshot_caps(
     items = list(
         session.scalars(select(InventoryItem).where(InventoryItem.snapshot_id == snapshot.id))
     )
-    near = {
-        cap.aisle_no: cap.is_near_station
-        for cap in session.scalars(select(AisleCap).where(AisleCap.snapshot_id == snapshot.id))
-    }
     old_caps = list(
         session.scalars(select(AisleCap).where(AisleCap.snapshot_id == snapshot.id))
     )
+    physical_cells, master_near = load_aisle_master(
+        session, warehouse_id=snapshot.warehouse_id
+    )
+    # 主数据没覆盖的巷道，沿用旧行的 is_near_station（三态原样保留）。
+    near = {cap.aisle_no: cap.is_near_station for cap in old_caps}
+    near.update(master_near)
 
     caps = aggregate_aisle_caps(
         items,
@@ -269,6 +337,7 @@ def recompute_snapshot_caps(
         snapshot_id=snapshot.id,
         reserve_ratio=reserve_ratio,
         is_near_station=near,
+        physical_cells=physical_cells,
     )
 
     for old in old_caps:

@@ -286,7 +286,7 @@ def test_confirm_relocate_verifies_drop(session: Session) -> None:
         job_order=order,
         operator_id=operator.id,
         executed_at=NOW,
-        source_location_code="020101",
+        source_locations=[{"location_code": "020101", "qty": 40}],
         target_location_code="010104",
         snapshot=scenario.snapshot,
     )

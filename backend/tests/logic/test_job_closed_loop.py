@@ -328,7 +328,7 @@ def test_cl006_relocate_updates_aisle_and_keeps_old_record(session: Session) -> 
         job_order=order,
         operator_id=operator.id,
         executed_at=NOW,
-        source_location_code="010104",
+        source_locations=[{"location_code": "010104", "qty": 40}],
         target_location_code="010105",
         snapshot=scenario.snapshot,
     )

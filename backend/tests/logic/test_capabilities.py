@@ -105,8 +105,8 @@ def test_llm_timeout_degrades_with_rule_card(session: Session) -> None:
 
 
 def test_llm_unavailable_degrades_with_rule_card(session: Session) -> None:
-    """未知 provider（未接线的真实 provider）→ `llm_unavailable`，规则卡片在。"""
-    result = _run(session, Settings(llm_provider="openai"))
+    """未接线 provider（如 gemini）→ `llm_unavailable`，规则卡片在。"""
+    result = _run(session, Settings(llm_provider="gemini"))
 
     assert result.rule == RULE
     assert result.ai is None

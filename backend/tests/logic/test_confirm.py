@@ -223,7 +223,7 @@ def test_confirm_relocate_success(session: Session) -> None:
         job_order=order,
         operator_id=operator.id,
         executed_at=NOW,
-        source_location_code="010104",
+        source_locations=[{"location_code": "010104", "qty": 40}],
         target_location_code="010105",
         snapshot=scenario.snapshot,
     )

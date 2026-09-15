@@ -88,6 +88,9 @@ def void_job(
                 # 冲正回补也必须按同一份巷道级路径取反，否则反向行 source/pick_path 双空，
                 # `apply_increment` 无从回补。
                 pick_path_json=normal.pick_path_json,
+                # 移库反向行照抄原行的方案 —— `apply_increment` 按 `plan_json.source_locations`
+                # 逐格扣减，反向行没有它时无从逐格回补（缺口 2）。
+                plan_json=normal.plan_json,
                 is_reversal=True,
             )
             apply_increment(session, ledger=reverse, snapshot=snapshot)

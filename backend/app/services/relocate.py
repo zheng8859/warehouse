@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence, Set
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -22,6 +22,8 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.core.enums import JobStatus
+from app.core.errors import ValidationBlocked
+from app.engine.allocator import to_occupied_cells
 from app.engine.factors import InventoryProfile, load_snapshot_index
 from app.models.job import JobOrder
 from app.models.linkage import Snapshot
@@ -81,6 +83,10 @@ def _consolidate_to(
     batch_plates_by_aisle: Mapping[str, int],
     available: Mapping[str, int],
     target: str,
+    cartons_per_pallet: int | None = None,
+    moving_batches: Set[str] | None = None,
+    batch_locations_by_aisle: Mapping[str, Sequence[tuple[str, int]]] = (),
+    material_locations_by_aisle: Mapping[str, Sequence[str]] = (),
 ) -> tuple[dict | None, tuple[str, str] | None]:
     """对**一个**目标巷道试算收拢方案；返回 `(plan, failure)`，恰一非空。
 
@@ -91,35 +97,68 @@ def _consolidate_to(
 
     - `from_aisles` = `batch_plates_by_aisle` 里**非目标**的巷道，按巷道号升序。
     - `plates` = 散落板总数 = `from_aisles` 板数之和。
-    - `after` = `profile.cross_aisle_count` − 收拢后变空的 from_aisle 数；「变空」判据 =
-      `batch_plates_by_aisle[a] == profile.plates_by_aisle[a]`（该批号是该巷唯一物料板）。
-    - cap 充足 = `available[target] >= plates`（v1 板 = 格，与 `to_occupied_cells` 同口径）。
+    - `after` = `profile.cross_aisle_count` − 收拢后变空的巷道数（**物料级**）。「变空」
+      判据：一条非目标巷道的批号集是 `moving_batches` 的子集 —— 即该巷该物料的每一批
+      都在本次被收拢的散批里、一并搬出。「按物料收拢散批」（用户 2026-09-15 确认）——
+      多批交织时单批收拢搬不空共享巷道，只有整料一并收拢才数得准 `after`；这是缺口 1
+      的修复（旧判据「本批是该巷唯一物料板」会把 GJP2571421/1322 这类交织散批误判
+      移出批量）。`moving_batches` 缺省退化为 `{batch_no}`（单批收拢 = 本批是该巷唯一批）。
+    - cap 充足 = `available[target] >= plates_cells`。
+
+    **单位口径**（D14 确认 2026-09-15）：`batch_plates_by_aisle` 里的数其实是**箱数**
+    （`inventory_items.qty`），而 `available` 是**格数**（1 板 = 1 格）。比较前用
+    `to_occupied_cells` 把箱数换成格数，否则 `cartons_per_pallet=102` 的料号会把
+    「298 格」误判成「30361 板」，容量放大约 102 倍、主巷道被错误判满。
     """
     from_aisles = sorted(a for a in batch_plates_by_aisle if a != target)
     plates = sum(batch_plates_by_aisle[a] for a in from_aisles)
+    plates_cells = to_occupied_cells(plates, cartons_per_pallet=cartons_per_pallet)
     before = profile.cross_aisle_count
+    moving = frozenset(moving_batches) if moving_batches is not None else frozenset({batch_no})
     emptied = sum(
         1
-        for a in from_aisles
-        if batch_plates_by_aisle[a] == profile.plates_by_aisle.get(a, 0)
+        for aisle, batches in profile.batches_by_aisle.items()
+        if aisle != target and batches and batches <= moving
     )
     after = before - emptied
 
     avail = available.get(target, 0)
-    if avail < plates:
-        return None, ("cap", f"巷道 {target} 容量不足（可用 {avail}，需 {plates} 板）")
+    if avail < plates_cells:
+        return None, ("cap", f"巷道 {target} 容量不足（可用 {avail}，需 {plates_cells} 板）")
     if after >= before:
         return None, (
             "concentration",
             f"收拢后同物料跨巷道数不低于收拢前（{after} ≥ {before}）——"
-            "该批号已集中于主巷道，或散落板与其他物料共占、移出后巷道不变空",
+            "散落板与其他物料/批号共占，或本批未随整料一并收拢、移出后巷道不变空",
         )
+
+    # 逐格真实源库位（缺口 2）：`from_aisles` 里该批的库存行，按库位号升序展平成
+    # `{location_code, qty}`（箱数）—— 执行侧据此逐格扣减，不再编造「巷道 + 固定后缀」。
+    source_locations = [
+        {"location_code": location_code, "qty": qty}
+        for aisle in from_aisles
+        for location_code, qty in batch_locations_by_aisle.get(aisle, ())
+    ]
+
+    # 目标库位 = 目标巷道内该物料的既有库位（确定性取最低库位号）。目标巷道来自
+    # `plates_by_aisle`（该巷该物料有板数），必然有库存行；无行只可能是取数缺口，
+    # 属数据自相矛盾 —— 响亮失败，不编造一个库位。
+    target_candidates = material_locations_by_aisle.get(target, ())
+    if not target_candidates:
+        return None, (
+            "cap",
+            f"目标巷道 {target} 无该物料的既有库位可取 —— 目标库位无从解析，不能编造库位",
+        )
+    target_location = target_candidates[0]
+
     plan = {
         "batch_no": batch_no,
         "material_code": material_code,
         "from_aisles": from_aisles,
         "target_aisle": target,
-        "plates": plates,
+        "plates": plates_cells,
+        "source_locations": source_locations,
+        "target_location": target_location,
         "expected_cross_aisle": {"before": before, "after": after},
         "batch_unchanged": True,
     }
@@ -133,17 +172,23 @@ def derive_consolidation_plan(
     profile: InventoryProfile,
     batch_plates_by_aisle: Mapping[str, int],
     available: Mapping[str, int],
+    cartons_per_pallet: int | None = None,
+    moving_batches: Set[str] | None = None,
+    batch_locations_by_aisle: Mapping[str, Sequence[tuple[str, int]]] = (),
+    material_locations_by_aisle: Mapping[str, Sequence[str]] = (),
 ) -> ConsolidationPlanResult:
     """收拢方案**只读派生**（15-04 §4.2 / design.md D2）：主巷道 + 三重校验 + 降级链。
 
     纯函数：不触会话、不调 `engine.invoke`、不写 `InventoryItem`/`Ledger`。输入 = 现状分布
     （`SnapshotIndex.profile(material_code)` 的 `InventoryProfile`）+ 批号级取数
-    （`batch_plates_by_aisle`）+ 各候选巷道的可用格数（`available`），输出 `17` §10.3 形状
-    （或移出批量的降级原因）。
+    （`batch_plates_by_aisle`）+ 逐格库位取数（`batch_locations_by_aisle` /
+    `material_locations_by_aisle`，缺口 2 的真实库位来源）+ 各候选巷道的可用格数
+    （`available`），输出 `17` §10.3 形状（或移出批量的降级原因）。
 
     三重校验：① cap 充足 ② 批号不变（`batch_unchanged`，结构性恒真）③ 集中度改善
-    （`after < before`）。降级链：主巷道 cap 不足 → 次选（cap 充足且 `after < before`
-    仍成立，方案记 `degrade_reason`）→ 仍不可行 → `moved_out_reason`（降级不静默）。
+    （`after < before`，**物料级**判据见 `_consolidate_to`）。降级链：主巷道 cap 不足 →
+    次选（cap 充足且 `after < before` 仍成立，方案记 `degrade_reason`）→ 仍不可行 →
+    `moved_out_reason`（降级不静默）。
 
     确定性：同样输入必得同样输出（无随机、无大模型）。
     """
@@ -161,6 +206,10 @@ def derive_consolidation_plan(
         batch_plates_by_aisle=batch_plates_by_aisle,
         available=available,
         target=main_aisle,
+        cartons_per_pallet=cartons_per_pallet,
+        moving_batches=moving_batches,
+        batch_locations_by_aisle=batch_locations_by_aisle,
+        material_locations_by_aisle=material_locations_by_aisle,
     )
     if main_plan is not None:
         return ConsolidationPlanResult(plan=main_plan)
@@ -181,6 +230,10 @@ def derive_consolidation_plan(
         batch_plates_by_aisle=batch_plates_by_aisle,
         available=available,
         target=second_aisle,
+        cartons_per_pallet=cartons_per_pallet,
+        moving_batches=moving_batches,
+        batch_locations_by_aisle=batch_locations_by_aisle,
+        material_locations_by_aisle=material_locations_by_aisle,
     )
     if second_plan is not None:
         second_plan["degrade_reason"] = (
@@ -282,24 +335,44 @@ def confirm_relocate(
     job_order: JobOrder,
     operator_id: int,
     executed_at: datetime,
-    source_location_code: str,
+    source_locations: Sequence[Mapping[str, object]],
     target_location_code: str,
-    actual_qty: int | None = None,
     snapshot: Snapshot | None = None,
     lock_version: int | None = None,
     plan_json: dict | None = None,
     degraded: bool = False,
     degrade_reason: str | None = None,
 ) -> JobOrder:
-    """移库确认→执行→后验：源库位移到目标库位，写移库台账 + cap 增量，迁 `EXECUTED` 再同步后验。
+    """移库确认→执行→后验：逐格源库位移到目标库位，写移库台账 + cap 增量，迁 `EXECUTED` 再同步后验。
 
     返回同一个 `job_order`（`VERIFIED` / `VERIFY_FAILED`，或失败回退的 `PLANNED`）。
     台账矩阵：移库源库位与目标库位都有（15 附录A）。
+
+    **单一台账行 + 逐格源库位随 `plan_json` 固化**（缺口 2）：`ledgers` 的唯一约束
+    `uq_ledgers_job_order_id_reversal(job_order_id, is_reversal)` 只允许一单一条正常台账行，
+    而散落板跨多个库位 —— 故台账行的 `source_location_code` 落**代表源库位**（逐格清单里的
+    最低库位号），完整逐格清单存进 `plan_json.source_locations`，`apply_increment` 据此
+    逐格扣减。实际执行量 = 逐格箱数之和（不是作业单上的批号总箱数 —— 目标巷道里本就
+    集中的那部分不搬）。
 
     移库后验是**相对阈值**（移库后跨巷道 < 移库前），故在增量**之前**先取「移库前」的同物料
     跨巷道数，交给后验编排与「移库后」比（`15-04` §8.1）。`lock_version` 透传给确认编排的
     乐观锁（见 `confirm._confirm_and_execute`）。
     """
+    if not source_locations:
+        raise ValidationBlocked(
+            f"作业单 #{job_order.id} 的移库源库位清单为空 —— 散落板跨多个库位，"
+            "必须给出逐格真实源库位（不能编造单一源库位）",
+            detail={"job_order_id": job_order.id},
+        )
+    representative_source = str(source_locations[0]["location_code"])
+    total_moved = sum(int(entry["qty"]) for entry in source_locations)
+    executed_plan = {
+        **(plan_json or {}),
+        "source_locations": [dict(entry) for entry in source_locations],
+        "target_location": target_location_code,
+    }
+
     cross_aisle_before: int | None = None
     if snapshot is not None:
         pre = load_snapshot_index(session, snapshot_id=snapshot.id)
@@ -310,12 +383,12 @@ def confirm_relocate(
         job_order=job_order,
         operator_id=operator_id,
         executed_at=executed_at,
-        source_location_code=source_location_code,
+        source_location_code=representative_source,
         target_location_code=target_location_code,
-        actual_qty=actual_qty,
+        actual_qty=total_moved,
         snapshot=snapshot,
         lock_version=lock_version,
-        plan_json=plan_json,
+        plan_json=executed_plan,
         degraded=degraded,
         degrade_reason=degrade_reason,
     )

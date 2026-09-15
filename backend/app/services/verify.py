@@ -55,7 +55,14 @@ from app.core.enums import JobStatus, JobType, VerifyResult
 from app.core.errors import BlockedMissingPrerequisite, DomainError, ValidationBlocked
 from app.core.state_machine import assert_transition
 from app.engine.factors import SnapshotIndex, aisle_of, load_snapshot_index
-from app.models.job import Deviation, DeviationCauseKind, JobOrder, Ledger, Verification
+from app.models.job import (
+    Deviation,
+    DeviationCauseKind,
+    DeviationStatus,
+    JobOrder,
+    Ledger,
+    Verification,
+)
 from app.models.linkage import Snapshot
 
 __all__ = [
@@ -353,9 +360,37 @@ def _write_deviations(
     `4.8` 这类小数。入库同物料与同批两条都偏离时各落一条（阈值 5 vs 3 可区分两行）——
     不合并成一条，否则会丢掉「哪一口径超标」这个事实。成因按作业类型给 v1 默认值，
     处置路径由操作员后续修订（`15-04` §4.1）。
+
+    **去重（只补缺）**：同一 `(物料, 批号, 成因, 阈值)` 已有未处置（`OPEN` /
+    `RELOCATE_STARTED`）的 `Deviation` 时跳过。同一生产批号会被多张入库单共享
+    （`generate_batch_no` 同日同批），逐单后验会把「该批收拢不达标」这一条事实重复落 N 行，
+    导致 P5/P6 冒出成排的重复偏离（真实数据里 4 张入库单共享 GJP2691571 即撞此况）。
+    成因纳入键是为了区分「入库同物料（阈值 5、成因新入库）」与「出库集中度（阈值同为 5、
+    成因历史库存拖累）」—— 两者阈值重合但事实不同，不能互相去重。与
+    `cap.deviation.scan_material_deviations` 的「只补缺」同一精神，不覆盖已处置进展。
     """
+    cause = _deviation_cause(job_order.job_type)
+    thresholds = {int(metric.threshold_value) for metric in metrics if metric.is_deviation}
+    if not thresholds:
+        return
+    existing = set(
+        session.scalars(
+            sa.select(Deviation.threshold_cross_aisle).where(
+                Deviation.warehouse_id == job_order.warehouse_id,
+                Deviation.material_code == job_order.material_code,
+                Deviation.batch_no == job_order.batch_no,
+                Deviation.cause_kind == cause,
+                Deviation.threshold_cross_aisle.in_(thresholds),
+                Deviation.status.in_(
+                    [DeviationStatus.OPEN, DeviationStatus.RELOCATE_STARTED]
+                ),
+            )
+        )
+    )
     for metric in metrics:
         if not metric.is_deviation:
+            continue
+        if int(metric.threshold_value) in existing:
             continue
         session.add(
             Deviation(
@@ -364,10 +399,45 @@ def _write_deviations(
                 material_code=job_order.material_code,
                 actual_cross_aisle=int(metric.actual_value),
                 threshold_cross_aisle=int(metric.threshold_value),
-                cause_kind=_deviation_cause(job_order.job_type),
+                cause_kind=cause,
             )
         )
     session.flush()
+
+
+def _reconcile_relocate_deviation(
+    session: Session, job_order: JobOrder, cross_aisle_after: int
+) -> None:
+    """移库完成后，把该物料的偏离推进到收拢后的真实状态。
+
+    事实来源：`15-04` §4.1 第 7 步「写移库台账 + 后验刷新」产出「台账 + **KPI 刷新**」；
+    `17` §4.4 的 `Deviation.status` 有 `未处理 → 已发起移库 → 已改善` 三态，但「移库后
+    状态推进」这半段此前没有任何代码实现 —— 导致 P6 偏离清单里，物料已按推荐完成移库、
+    跨巷道数却仍停在移库前的旧值（`scan_material_deviations` 落库的静态快照）。
+
+    `scan_material_deviations` 只补缺、不覆盖已处置进展（见 `app/cap/deviation.py`），故
+    移库后的刷新必须由**后验编排**在收拢作业完成时补上：把 `actual_cross_aisle` 刷成
+    移库后的真实同物料跨巷道数，并在收拢到阈值以内时把状态推进到「已改善」。
+
+    匹配 `material_code + 已发起移库`，**不按 `batch_no` 过滤**：`start_relocate` 是唯一
+    写「已发起移库」的入口，它把偏离一律当作「该物料要按物料收拢散批」的物料级事实
+    （按 `material_code` 扇出散批，`15-04` §4.1），故无论偏离原本是物料级（批号空）还是
+    批号级（后验逐单落），一旦「发起移库」其语义都已归一为「该物料跨巷道超标」——收拢后
+    按物料重算跨巷道并对齐状态，正是这条归一语义的闭环。
+    """
+    deviations = session.scalars(
+        sa.select(Deviation).where(
+            Deviation.warehouse_id == job_order.warehouse_id,
+            Deviation.material_code == job_order.material_code,
+            Deviation.status == DeviationStatus.RELOCATE_STARTED,
+        )
+    ).all()
+    for deviation in deviations:
+        deviation.actual_cross_aisle = cross_aisle_after
+        if cross_aisle_after <= deviation.threshold_cross_aisle:
+            deviation.status = DeviationStatus.IMPROVED
+    if deviations:
+        session.flush()
 
 
 def run_verification(
@@ -400,6 +470,10 @@ def run_verification(
             metrics = _compute_metrics(session, job_order, snapshot, cross_aisle_before)
             _write_verifications(session, job_order, metrics)
             _write_deviations(session, job_order, metrics)
+            if job_order.job_type is JobType.RELOCATE:
+                _reconcile_relocate_deviation(
+                    session, job_order, int(metrics[0].actual_value)
+                )
             job_order.status = assert_transition(job_order.status, JobStatus.VERIFIED)
             session.flush()
     except BlockedMissingPrerequisite:
