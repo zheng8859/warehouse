@@ -67,7 +67,7 @@ git push no-mistakes <branch>                     # 推过门禁，触发流水�
 ① 数据衔接层  backend/app/importer/ , backend/app/cap/
 ② 应用服务层  backend/app/engine/ , backend/app/services/
 ③ 前端层      零构建静态页（阶段七，文档 31）
-④ 冷路径      backend/app/llm/（默认关闭）
+④ 冷路径      backend/app/llm/（默认打开、一键关闭）
   横切        backend/app/core/ , models/ , schemas/ , api/
 ```
 
@@ -103,7 +103,7 @@ backend/
 ### 核心链路不出域
 - 评分 / 落位 / 后验 / 台账全部**本地确定性计算**，不依赖任何外部 LLM / 搜索 / API。
 - **同样输入必得同样输出**：不用随机搜索，不用大模型生成落位。
-- 冷路径 LLM 仅外发**脱敏后**的意图文本；默认关闭，且必须可一键关闭。
+- 冷路径 LLM 仅外发**脱敏后**的意图文本；默认打开，且必须可一键关闭。
 
 ### 冷路径的三条不可逾越红线（`10`）
 1. LLM 不参与实时评分与排序
