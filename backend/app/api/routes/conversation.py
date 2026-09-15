@@ -123,8 +123,9 @@ def conversation_message(
     else:
         question = payload.question or ""
         nlu = recognize_intent(question, settings=settings)
-        if nlu is None:
-            # L2 NLU 失败（Phase A `llm_provider=""`）→ fail-closed：不猜意图、不直出。
+        if not nlu.ok:
+            # L2 NLU 失败（未接 provider / 超时 / 解析不出意图）→ fail-closed：
+            # 不猜意图、不直出，降级原因原样带出（provider 未配置 ≠ 听不懂，各归各）。
             _log_unrecognized(
                 session,
                 account_id=account.id,
@@ -138,9 +139,10 @@ def conversation_message(
                 rule={},
                 ai=None,
                 ai_generated=False,
-                degraded_reason=DegradedReason.PROVIDER_UNCONFIGURED.value,
+                degraded_reason=nlu.degraded_reason,
             )
-        recognized = route_intent(nlu[0], nlu[1])
+        assert nlu.intent is not None
+        recognized = route_intent(nlu.intent, nlu.slots)
         question_raw = question
         question_redacted = redact_text(question)
 

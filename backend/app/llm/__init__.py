@@ -1,4 +1,4 @@
-"""冷路径 AI 辅助（阶段五 / 设计 10）—— 可选增强，默认关闭。
+"""冷路径 AI 辅助（阶段五 / 设计 10）—— 可选增强，默认打开、一键关闭。
 
 红线：LLM 不参与实时评分与排序；不直接执行写操作；产出不经规则校验不进台账。
 一键关闭后核心链路不受任何影响。
@@ -23,3 +23,4 @@ class DegradedReason(str, Enum):
     LLM_TIMEOUT = "llm_timeout"                      # 外部调用超时
     LLM_UNAVAILABLE = "llm_unavailable"              # 外部服务连接失败 / 不可用
     INSUFFICIENT_SAMPLES = "insufficient_samples"    # ③ 权重调优：历史批次 < 50
+    INTENT_UNRECOGNIZED = "intent_unrecognized"      # L2 NLU 未产出合法意图（解析失败 / 无意图）

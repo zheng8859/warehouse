@@ -622,7 +622,7 @@ def test_standard_4_scenario_valid_credential_passes(api: Api) -> None:
     response = api.client.get("/api/health", headers=api.auth(token))
 
     assert response.status_code == 200
-    assert response.json()["cold_path_enabled"] is False
+    assert response.json()["cold_path_enabled"] is True
 
 
 def test_standard_4_scenario_expired_credential_is_401(api: Api) -> None:

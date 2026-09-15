@@ -30,12 +30,16 @@ pytestmark = pytest.mark.api
 
 
 def _enable_cold_path(monkeypatch: pytest.MonkeyPatch) -> None:
-    """开启冷路径开关（默认关闭，端点守卫在请求时读 `settings.cold_path_enabled`）。"""
+    """开启冷路径开关（默认打开，此处显式置位；守卫在请求时读 `settings.cold_path_enabled`）。"""
     monkeypatch.setattr(settings, "cold_path_enabled", True)
 
 
-def test_cold_path_disabled_returns_409_for_llm_endpoints(job_api) -> None:
-    """开关关闭（默认）→ 409 `cold_path_disabled`，即便持 `ai.assist` 的仓管员亦然。"""
+def test_cold_path_disabled_returns_409_for_llm_endpoints(job_api, monkeypatch) -> None:
+    """开关显式关闭 → 409 `cold_path_disabled`，即便持 `ai.assist` 的仓管员亦然。
+
+    默认开关是「打开」，故这里必须显式关掉再断言（一键关闭的语义）。
+    """
+    monkeypatch.setattr(settings, "cold_path_enabled", False)
     response = job_api.client.post(
         "/api/llm/kpi/interpret",
         json={"warehouse_id": settings.warehouse_code},
@@ -46,9 +50,9 @@ def test_cold_path_disabled_returns_409_for_llm_endpoints(job_api) -> None:
 
 
 def test_llm_unavailable_degrades_to_200(job_api, monkeypatch) -> None:
-    """未知 provider（Phase A 未接线）→ 200 + `llm_unavailable` 规则卡片，不 5xx。"""
+    """未接线 provider（如 gemini）→ 200 + `llm_unavailable` 规则卡片，不 5xx。"""
     _enable_cold_path(monkeypatch)
-    monkeypatch.setattr(settings, "llm_provider", "openai")  # 非空但未接线
+    monkeypatch.setattr(settings, "llm_provider", "gemini")  # 非空但未接线
 
     response = job_api.client.post(
         "/api/llm/kpi/interpret",
@@ -74,7 +78,7 @@ def test_llm_timeout_degrades_to_200(job_api, monkeypatch) -> None:
         return "晚到的回复"
 
     # 端点不暴露 backend 注入，改 `_resolve_backend` 让非空 provider 解析到慢后端。
-    monkeypatch.setattr(client, "_resolve_backend", lambda provider: slow)
+    monkeypatch.setattr(client, "_resolve_backend", lambda provider, system=None: slow)
 
     response = job_api.client.post(
         "/api/llm/kpi/interpret",

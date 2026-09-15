@@ -31,6 +31,7 @@ L1 单元须小于 5 秒（pre-commit 门禁）。
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Iterator
 
 import pytest
@@ -38,6 +39,31 @@ from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
+
+# ---------------------------------------------------------------------------
+# 测试套件与 backend/.env 隔离：在导入任何 app.* 之前，先把 WMS_* 钉回「代码默认值」。
+#
+# `app/core/config.py` 在 import 时即创建单例 `settings = Settings()`；pydantic-settings
+# 的优先级是 初始化参数 > 环境变量 > .env 文件 > 字段默认值。仓库根的 backend/.env 是
+# gitignore 的（可能填了真实 key、把 provider 写成 "DeepSeek"、打开了冷路径开关），
+# 若不在此钉住，`Settings()` 会读到 .env 的值，污染依赖「代码默认值」的断言
+# （tests/core/test_config.py 的默认值、tests/api/test_ai_boundary.py 的 409 开关守卫）。
+#
+# 关键事实（已实测）：**空字符串环境变量也会覆盖 .env 文件里的值**，所以这里不是
+# 「有则保留、无则兜底」的 setdefault —— 必须显式赋值，把 .env 里可能存在的值顶掉。
+# ---------------------------------------------------------------------------
+for _key, _val in {
+    "WMS_COLD_PATH_ENABLED": "true",  # 新默认：打开（一键关闭）
+    "WMS_LLM_PROVIDER": "",
+    "WMS_LLM_API_KEY": "",
+    "WMS_LLM_BASE_URL": "",
+    "WMS_LLM_MODEL": "",
+    "WMS_LLM_REQUEST_TIMEOUT_S": "10.0",
+    "WMS_LLM_MAX_TOKENS_PER_REQ": "4096",
+    "WMS_LLM_MAX_CONCURRENCY": "4",
+    "WMS_LLM_MONTHLY_BUDGET": "1000000",
+}.items():
+    os.environ[_key] = _val
 
 import app.models  # noqa: F401  必须导入：确保 Base.metadata 完整（建表与迁移依赖）
 from app.core.db import json_serializer

@@ -14,15 +14,18 @@ from app.core.config import Settings
 
 
 def test_cold_path_cost_guardrail_defaults() -> None:
-    """D3 的四项默认值 + 冷路径总开关默认关闭（10 §七：默认关闭、一键关闭）。"""
+    """D3 的四项默认值 + 冷路径总开关默认打开（09 原则④：一键关闭）。"""
     settings = Settings()
 
-    assert settings.cold_path_enabled is False
+    assert settings.cold_path_enabled is True
     assert settings.llm_provider == ""
+    assert settings.llm_api_key == ""
+    assert settings.llm_base_url == ""
+    assert settings.llm_model == ""
     assert settings.llm_max_tokens_per_req == 4096
     assert settings.llm_max_concurrency == 4
     assert settings.llm_monthly_budget == 1_000_000
-    assert settings.llm_request_timeout_s == 2.0
+    assert settings.llm_request_timeout_s == 10.0
 
 
 def test_cold_path_cost_guardrails_are_overridable(monkeypatch) -> None:

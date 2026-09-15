@@ -86,12 +86,22 @@ class Settings(BaseSettings):
     import_field_hit_ratio: float = 1.0
 
     # ------------------------------------------------------------ 冷路径（10 §七）
-    #: 默认关闭；关闭时核心链路不受任何影响。
-    cold_path_enabled: bool = False
+    #: 默认打开（一键关闭）；关闭时核心链路不受任何影响。
+    cold_path_enabled: bool = True
     #: 外部 LLM 供应商标识；空字符串 = 未配置 = 不发起任何外部调用，走「仅规则卡片」
     #: 降级路径（`degraded_reason=provider_unconfigured`）。与 `cold_path_enabled` 是
     #: 两个独立的门：开关管「能力整体是否可用」，provider 管「出了开关有没有模型可调」。
+    #: 取值：""=不调用 · "mock"=确定性回显（测试）· "openai"/"openai_compatible"=真实
+    #: OpenAI 兼容 `/chat/completions` 后端（配合 `llm_api_key`/`llm_base_url`/`llm_model`）。
     llm_provider: str = ""
+    #: 出站 API Key（provider 为 OpenAI 兼容时使用）。空 = 未配置 → 视同不可用
+    #: （`llm_unavailable`），不会带着空 key 出站。
+    llm_api_key: str = ""
+    #: 出站 base URL（末尾 `/v1` 可带可不带，backend 会补 `/chat/completions`）。
+    #: 空 = 回落 OpenAI 官方 `https://api.openai.com/v1`。
+    llm_base_url: str = ""
+    #: 模型名。空 = 回落 `gpt-4o-mini`。常见：deepseek-chat / qwen-plus / glm-4 / moonshot-v1-8k。
+    llm_model: str = ""
     #: 单请求 token 上限（10 §七 成本护栏第 ① 道）。覆盖 KPI 报告 / 归因输出体量
     #: （~1500–2500 token）留余量。超限**拒绝并提示拆分**，不截断文本。
     llm_max_tokens_per_req: int = 4096
@@ -100,7 +110,10 @@ class Settings(BaseSettings):
     #: 月度预算硬上限（护栏第 ③ 道），单位 = token（与 `llm_max_tokens_per_req` 同单位，
     #: 直接可比、可直接测）。超限在请求入口熔断，降级为「仅规则卡片」。
     llm_monthly_budget: int = 1_000_000
-    llm_request_timeout_s: float = 2.0
+    #: 单请求超时（秒）。真实 OpenAI 兼容服务一次 KPI 解读约 3~4s（本机 DeepSeek 实测），
+    #: 10 §七 原「2.0s」是在「默认关闭 + 仅 mock」口径下定死的，接真模型后会误伤成
+    #: `llm_timeout`，故上调到 10s（仍保留「单进程低频、不占写库」的护栏语义）。
+    llm_request_timeout_s: float = 10.0
 
     @field_validator("environment")
     @classmethod

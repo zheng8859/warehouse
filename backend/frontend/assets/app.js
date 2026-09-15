@@ -124,8 +124,8 @@ document.querySelectorAll('.cf-switch').forEach(sw => {
     sw.addEventListener('click', () => sw.classList.toggle('off'));
     return;
   }
-  // 冷路径默认关闭（cold_path_enabled=false），页面加载先落「关」；无只读状态端点，状态仅随切换回显。
-  sw.classList.add('off');
+  // 冷路径默认打开（cold_path_enabled=true），页面加载先落「开」；无只读状态端点，状态仅随切换回显。
+  sw.classList.remove('off');
   if (getRole() !== 'admin') {
     sw.style.cursor = 'not-allowed';
     sw.title = '仅管理员可切换冷路径开关';
@@ -237,7 +237,8 @@ const DEGRADED_TEXT = {
   budget_exhausted: '本月 AI 预算已用尽，仅展示规则结果',
   llm_timeout: 'AI 分析超时，仅展示规则结果',
   llm_unavailable: 'AI 服务暂不可用，仅展示规则结果',
-  insufficient_samples: '历史批次样本不足，仅展示统计摘要'
+  insufficient_samples: '历史批次样本不足，仅展示统计摘要',
+  intent_unrecognized: '没能听懂你的问题，请换个说法或使用下方结构化入口'
 };
 
 // 双产物渲染（spec「双产物建议卡渲染」+ design D2）：rule 恒有（系统结论，常规样式）

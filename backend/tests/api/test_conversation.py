@@ -18,7 +18,7 @@ pytestmark = pytest.mark.api
 
 
 def _enable_cold_path(monkeypatch: pytest.MonkeyPatch) -> None:
-    """开启冷路径开关（默认关闭，端点守卫在请求时读 `settings.cold_path_enabled`）。"""
+    """开启冷路径开关（默认打开，此处显式置位；守卫在请求时读 `settings.cold_path_enabled`）。"""
     monkeypatch.setattr(settings, "cold_path_enabled", True)
 
 
@@ -86,8 +86,9 @@ def test_read_intent_returns_direct_result(job_api, monkeypatch) -> None:
     assert "metrics" in body["rule"]
 
 
-def test_cold_path_disabled_returns_409(job_api) -> None:
-    """开关关闭（默认）→ 409 `cold_path_disabled`（不调 LLM、不路由、不落日志）。"""
+def test_cold_path_disabled_returns_409(job_api, monkeypatch) -> None:
+    """开关显式关闭 → 409 `cold_path_disabled`（不调 LLM、不路由、不落日志）。"""
+    monkeypatch.setattr(settings, "cold_path_enabled", False)
     response = job_api.client.post(
         "/api/conversation/message",
         json={"warehouse_id": settings.warehouse_code, "intent": "KPI_INTERPRET"},
@@ -121,3 +122,45 @@ def test_missing_material_code_for_write_intent(job_api, monkeypatch) -> None:
         headers=job_api.headers,
     )
     assert response.status_code == 422
+
+
+def test_l2_free_text_unconfigured_provider_returns_provider_unconfigured(job_api, monkeypatch) -> None:
+    """L2 自由文本 + provider 未配置 → `provider_unconfigured`（不是 `intent_unrecognized`，各归各）。"""
+    _enable_cold_path(monkeypatch)
+    response = job_api.client.post(
+        "/api/conversation/message",
+        json={"warehouse_id": settings.warehouse_code, "question": "帮我分析本周集中度下滑原因"},
+        headers=job_api.headers,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["intent"] is None
+    assert body["write_intent"] is False
+    assert body["rule"] == {}
+    assert body["ai"] is None
+    assert body["ai_generated"] is False
+    assert body["degraded_reason"] == "provider_unconfigured"
+
+
+def test_l2_free_text_routes_to_kpi_interpret_when_nlu_recognizes(job_api, monkeypatch) -> None:
+    """L2 自由文本被 NLU 识别为 KPI_INTERPRET → 端点正常路由到 ① 解读（本次修复的正向验证）。"""
+    _enable_cold_path(monkeypatch)
+    from app.llm.nlu import NluResult
+
+    monkeypatch.setattr(
+        "app.api.routes.conversation.recognize_intent",
+        lambda question, *, settings=None, timeout_s=None: NluResult(
+            intent="KPI_INTERPRET", slots={}, degraded_reason=None
+        ),
+    )
+
+    response = job_api.client.post(
+        "/api/conversation/message",
+        json={"warehouse_id": settings.warehouse_code, "question": "帮我分析本周集中度下滑原因"},
+        headers=job_api.headers,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["intent"] == "KPI_INTERPRET"
+    assert body["write_intent"] is False
+    assert "metrics" in body["rule"]

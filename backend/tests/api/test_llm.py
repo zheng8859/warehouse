@@ -28,7 +28,7 @@ pytestmark = pytest.mark.api
 
 
 def _enable_cold_path(monkeypatch: pytest.MonkeyPatch) -> None:
-    """开启冷路径开关（默认关闭，端点守卫在请求时读 `settings.cold_path_enabled`）。"""
+    """开启冷路径开关（默认打开，此处显式置位；守卫在请求时读 `settings.cold_path_enabled`）。"""
     monkeypatch.setattr(settings, "cold_path_enabled", True)
 
 
@@ -258,8 +258,9 @@ def test_toggle_is_admin_only_403(job_api, role) -> None:
     assert response.json()["error"] == "permission_denied"
 
 
-def test_cold_path_guard_precedes_permission(job_api) -> None:
-    """开关关闭时，即便无 `ai.*` 权限的角色也先得 409（spec「任意角色 → 409」），而非 403。"""
+def test_cold_path_guard_precedes_permission(job_api, monkeypatch) -> None:
+    """开关显式关闭时，即便无 `ai.*` 权限的角色也先得 409（spec「任意角色 → 409」），而非 403。"""
+    monkeypatch.setattr(settings, "cold_path_enabled", False)
     planner = _headers_for(job_api, Role.PLANNER)
     response = job_api.client.post(
         "/api/llm/kpi/interpret",
