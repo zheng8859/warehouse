@@ -10,15 +10,41 @@
 """
 from __future__ import annotations
 
-import pytest
+from datetime import datetime
 
+import pytest
+from sqlalchemy.orm import Session
+
+from app.core.enums import AccountStatus, JobStatus, JobType, LedgerType, Role
+from app.models.identity import Account
+from app.models.job import Ledger
 from app.services.kpi import (
     adoption_rate,
+    compute_kpi_summary,
     same_material_cross_aisle_mean,
     weighted_concentration,
 )
 
+from .conftest import InventorySpec, JobOrderSpec, make_scenario
+
 pytestmark = pytest.mark.logic
+
+MATERIAL = "M1"
+WAREHOUSE = "GTJ10036"
+NOW = datetime(2026, 9, 8, 8, 0, 0)
+
+
+def _operator(session: Session) -> Account:
+    account = Account(
+        warehouse_id=WAREHOUSE,
+        username="gtj_keeper",
+        password_hash="$2b$12$" + "0" * 53,
+        role=Role.WAREHOUSE_KEEPER,
+        status=AccountStatus.ACTIVE,
+    )
+    session.add(account)
+    session.flush()
+    return account
 
 
 # ------------------------------------------------------------------ 同物料跨巷道均值
@@ -91,3 +117,90 @@ def test_adoption_rate_guards_divide_by_zero() -> None:
 def test_adoption_rate_full_and_empty() -> None:
     assert adoption_rate(10, 10) == 1.0
     assert adoption_rate(0, 10) == 0.0
+
+
+# ------------------------------------------------------------------ KPI 看板聚合（compute_kpi_summary，从真实数据计算）
+
+def test_compute_kpi_summary_reads_material_cross_aisle_from_inventory(
+    session: Session,
+) -> None:
+    """同物料跨巷道均值从库存取值：M1 占 6 巷、M2 占 2 巷 → 均值 4.0（不是硬编码演示值）。"""
+    make_scenario(
+        session,
+        inventory=[
+            *[InventorySpec(f"0{i}0101", "M1", "B1", 10) for i in range(1, 7)],  # M1 6 巷
+            InventorySpec("010101", "M2", "B2", 10),
+            InventorySpec("020101", "M2", "B2", 10),
+        ],
+    )
+
+    summary = compute_kpi_summary(session, warehouse_id=WAREHOUSE)
+
+    assert summary["material_cross_aisle_mean"] == 4.0
+    # 无出库台账 / 无入库推荐 → 其余三项为 0，不抛异常。
+    assert summary["weighted_concentration"] == 0.0
+    assert summary["per_do_cross_aisle_mean"] == 0.0
+    assert summary["adoption_rate"] == 0.0
+
+
+def test_compute_kpi_summary_reads_concentration_from_outbound_ledger(
+    session: Session,
+) -> None:
+    """拣货量加权集中度 / 单张开单跨巷道均值从出库台账拣货路径取值。"""
+    operator = _operator(session)
+    scenario = make_scenario(
+        session,
+        job_orders=[
+            JobOrderSpec(
+                order_no="DO-88", material_code=MATERIAL, qty=100,
+                batch_no="B1", job_type=JobType.OUTBOUND, status=JobStatus.VERIFIED,
+            )
+        ],
+    )
+    order = scenario.job_orders[0]
+    session.add(
+        Ledger(
+            warehouse_id=WAREHOUSE,
+            job_order_id=order.id,
+            is_reversal=False,
+            ledger_type=LedgerType.OUTBOUND,
+            order_no=order.order_no,
+            material_code=order.material_code,
+            batch_no=order.batch_no,
+            qty=order.qty,
+            source_location_code=None,
+            target_location_code=None,
+            pick_path_json=[
+                {"aisle": "01", "qty": 60, "batches": ["B1"]},
+                {"aisle": "02", "qty": 40, "batches": ["B1"]},
+            ],
+            operator_id=operator.id,
+            executed_at=NOW,
+        )
+    )
+    session.flush()
+
+    summary = compute_kpi_summary(session, warehouse_id=WAREHOUSE)
+
+    # 60/40：80% of 100 = 80，60 < 80 需再累加 40 → 覆盖 2 条巷道；两巷 → 单张开单跨巷道均值 2。
+    assert summary["weighted_concentration"] == 2.0
+    assert summary["per_do_cross_aisle_mean"] == 2.0
+
+
+def test_compute_kpi_summary_reads_adoption_from_inbound_statuses(session: Session) -> None:
+    """推荐采纳率从入库作业单状态取值：1 VERIFIED ÷ (1 VERIFIED + 1 PLANNED + 1 REJECTED)。"""
+    make_scenario(
+        session,
+        job_orders=[
+            JobOrderSpec(order_no="PO-01", material_code=MATERIAL, qty=40,
+                         batch_no="B1", job_type=JobType.INBOUND, status=JobStatus.VERIFIED),
+            JobOrderSpec(order_no="PO-02", material_code=MATERIAL, qty=40,
+                         batch_no="B1", job_type=JobType.INBOUND, status=JobStatus.PLANNED),
+            JobOrderSpec(order_no="PO-03", material_code=MATERIAL, qty=40,
+                         batch_no="B1", job_type=JobType.INBOUND, status=JobStatus.REJECTED),
+        ],
+    )
+
+    summary = compute_kpi_summary(session, warehouse_id=WAREHOUSE)
+
+    assert summary["adoption_rate"] == pytest.approx(1 / 3, abs=1e-4)

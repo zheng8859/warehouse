@@ -22,7 +22,9 @@ from collections.abc import Iterable
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
-from app.models.job import Deviation, DeviationStatus
+from app.core.enums import JobStatus, JobType, LedgerType
+from app.models.job import Deviation, DeviationStatus, JobOrder, Ledger
+from app.models.linkage import InventoryItem, Snapshot
 
 
 def list_deviations(
@@ -93,3 +95,88 @@ def adoption_rate(adopted: int, total: int) -> float:
     if total == 0:
         return 0.0
     return adopted / total
+
+
+def compute_kpi_summary(session: Session, *, warehouse_id: str) -> dict:
+    """KPI 看板四个指标的聚合 —— 全部从真实数据计算，不硬编码演示值（阶段六收编点）。
+
+    口径（逐条对齐 `18` §1.3）：
+
+    - `material_cross_aisle_mean`：同物料跨巷道均值 —— 当前快照库存里每个物料跨的巷道数
+      取均值（`same_material_cross_aisle_mean`，目标 ≤5）。**从库存取值**。
+    - `weighted_concentration`：拣货量加权集中度 —— 已出库台账（`Ledger.pick_path_json`）
+      逐单 `weighted_concentration` 取均值（目标 ≤5）。
+    - `per_do_cross_aisle_mean`：单张开单跨巷道均值 —— 已出库台账每单跨的巷道数取均值
+      （参考监控，不作硬验收）。
+    - `adoption_rate`：推荐采纳率 —— 入库落位推荐「已确认（VERIFIED）÷ 已出推荐
+      （VERIFIED + PLANNED + REJECTED）」。
+
+    无数据（无快照 / 无出库台账 / 无入库推荐）时对应项为 0.0，不抛异常。
+    """
+    snapshot = session.scalars(
+        sa.select(Snapshot)
+        .where(Snapshot.warehouse_id == warehouse_id)
+        .order_by(Snapshot.version_no.desc())
+        .limit(1)
+    ).first()
+
+    # 1. 同物料跨巷道均值 —— 从库存取值（material_code, location_code[:2]）。
+    material_cross_aisle_mean = 0.0
+    if snapshot is not None:
+        pairs = session.execute(
+            sa.select(InventoryItem.material_code, InventoryItem.location_code).where(
+                InventoryItem.snapshot_id == snapshot.id
+            )
+        ).all()
+        material_cross_aisle_mean = same_material_cross_aisle_mean(
+            (material, location[:2]) for material, location in pairs
+        )
+
+    # 2/3. 出库台账拣货路径的加权集中度 / 单张开单跨巷道均值。
+    outbound_ledgers = session.scalars(
+        sa.select(Ledger).where(
+            Ledger.warehouse_id == warehouse_id,
+            Ledger.ledger_type == LedgerType.OUTBOUND,
+            Ledger.is_reversal.is_(False),
+            Ledger.pick_path_json.is_not(None),
+        )
+    ).all()
+    concentrations: list[int] = []
+    aisle_counts: list[int] = []
+    for ledger in outbound_ledgers:
+        pick = ledger.pick_path_json or []
+        qty_by_aisle = {entry["aisle"]: int(entry.get("qty") or 0) for entry in pick}
+        concentrations.append(weighted_concentration(qty_by_aisle.items()))
+        aisle_counts.append(len(qty_by_aisle))
+    weighted_concentration_mean = (
+        sum(concentrations) / len(concentrations) if concentrations else 0.0
+    )
+    per_do_cross_aisle_mean = (
+        sum(aisle_counts) / len(aisle_counts) if aisle_counts else 0.0
+    )
+
+    # 4. 推荐采纳率 —— 入库落位推荐：已确认 ÷ 已出推荐。
+    adopted = 0
+    total = 0
+    for status, count in session.execute(
+        sa.select(JobOrder.status, sa.func.count())
+        .where(
+            JobOrder.warehouse_id == warehouse_id,
+            JobOrder.job_type == JobType.INBOUND,
+            JobOrder.status.in_(
+                [JobStatus.VERIFIED, JobStatus.PLANNED, JobStatus.REJECTED]
+            ),
+        )
+        .group_by(JobOrder.status)
+    ).all():
+        total += count
+        if status is JobStatus.VERIFIED:
+            adopted = count
+    adoption = adoption_rate(adopted, total)
+
+    return {
+        "material_cross_aisle_mean": round(material_cross_aisle_mean, 2),
+        "weighted_concentration": round(weighted_concentration_mean, 2),
+        "per_do_cross_aisle_mean": round(per_do_cross_aisle_mean, 2),
+        "adoption_rate": round(adoption, 4),
+    }
