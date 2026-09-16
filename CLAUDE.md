@@ -300,7 +300,7 @@ Go/No-Go 闸门：集中度达成率 ≥70% 且趋势向好 + 护栏全过 → G
 灰度部署（`33` Step 2/3）因无真实部署目标暂缓 —— 详见下「阶段八」与「未完成」。**
 
 **阶段一（`v0.1.0`）**：`openspec/` 已初始化且 `config.yaml` 已填 · `backend/` 骨架 · 本文件 ·
-`CONTEXT.md` · `git init`（`main` 分支，origin = 本地裸仓库 `D:\成品库位智能推荐\warehouse-origin.git`）·
+`CONTEXT.md` · `git init`（`main` 分支，origin = 本地裸仓库 `D:\成品库位智能推荐\warehouse-origin.git`；2026-09-16 增 `github` 远端 `https://github.com/zheng8859/warehouse`，首次推 `main` + 10 tags）·
 no-mistakes 已 `init`（二进制本机已存在，见第十二节）· graphify 已验证端到端可用（见第十三节）·
 新增 `env` scope（`00` §4.2 正本 + 校验脚本同步，见第六节）·
 venv（`backend/.venv`）已建、`requirements.txt` 已装 ·
