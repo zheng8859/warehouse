@@ -27,6 +27,7 @@ pytestmark = pytest.mark.l3
 WAREHOUSE = "GTJ10036"
 MATERIAL = "M1"
 BATCH = "B26090801"
+OTHER = "B26090802"
 NOW = datetime(2026, 9, 14, 10, 0)
 
 #: doc 10 §六 的示例分布：12 巷 / 340 板，板数降序（与 tests/logic/test_relocate_propose.py 同源）。
@@ -38,6 +39,16 @@ _DOC_PLATES = {
 
 def _plenty() -> dict[str, int]:
     return {aisle: 1000 for aisle in _DOC_PLATES}
+
+
+def _batch_locations(aisle_qtys: dict[str, int]) -> dict[str, list[tuple[str, int]]]:
+    """批号级逐格库位：每巷一格（`{aisle}0101`），箱数 = 该批在该巷的箱数（缺口 2 真实库位）。"""
+    return {aisle: [(f"{aisle}0101", qty)] for aisle, qty in aisle_qtys.items()}
+
+
+def _material_locations(aisles) -> dict[str, list[str]]:
+    """物料级库位：每巷一个既有库位（`{aisle}0101`），作为目标库位候选（缺口 2）。"""
+    return {aisle: [f"{aisle}0101"] for aisle in aisles}
 
 
 def _operator(session: Session) -> Account:
@@ -68,15 +79,24 @@ def test_golden_049_relocate_plans_three_tiers_with_quantified_cost():
 
 def test_golden_051_triple_validation_required_for_adoption():
     """golden_051：三重校验（cap 充足 / 批号不变 / 集中度改善）通过才采纳。"""
-    profile = InventoryProfile(snapshot_present=True, plates_by_aisle={"01": 30, "02": 20, "03": 10})
+    # 缺口 1 的物料级口径：本批独占 03（该巷批号集 = {BATCH}），收拢后 03 变空；
+    # 02 与 OTHER 共占，收拢后不变空 → after = 3 − 1 = 2。
+    ok_profile = InventoryProfile(
+        snapshot_present=True,
+        plates_by_aisle={"01": 30, "02": 20, "03": 10},
+        batches_by_aisle={"01": {OTHER}, "02": {BATCH, OTHER}, "03": {BATCH}},
+    )
+    material_locations = _material_locations(["01", "02", "03"])
 
     # 三重校验全过 → 出方案（采纳），且批号不变、跨巷道下降。
     ok = derive_consolidation_plan(
         material_code=MATERIAL,
         batch_no=BATCH,
-        profile=profile,
+        profile=ok_profile,
         batch_plates_by_aisle={"02": 10, "03": 10},
         available={"01": 100, "02": 100, "03": 100},
+        batch_locations_by_aisle=_batch_locations({"02": 10, "03": 10}),
+        material_locations_by_aisle=material_locations,
     )
     assert ok.plan is not None
     assert ok.plan["batch_unchanged"] is True
@@ -86,9 +106,15 @@ def test_golden_051_triple_validation_required_for_adoption():
     starved = derive_consolidation_plan(
         material_code=MATERIAL,
         batch_no=BATCH,
-        profile=profile,
+        profile=InventoryProfile(
+            snapshot_present=True,
+            plates_by_aisle={"01": 30, "02": 20, "03": 10},
+            batches_by_aisle={"01": {BATCH, OTHER}, "02": {OTHER}, "03": {BATCH}},
+        ),
         batch_plates_by_aisle={"01": 5, "03": 10},
         available={"01": 5, "02": 5, "03": 100},
+        batch_locations_by_aisle=_batch_locations({"01": 5, "03": 10}),
+        material_locations_by_aisle=material_locations,
     )
     assert starved.plan is None
     assert starved.moved_out_reason is not None
@@ -114,7 +140,7 @@ def test_golden_052_relocate_execution_updates_aisle_keeps_batch(session):
         job_order=order,
         operator_id=operator.id,
         executed_at=NOW,
-        source_location_code="010104",
+        source_locations=[{"location_code": "010104", "qty": 40}],
         target_location_code="010105",
         snapshot=scenario.snapshot,
     )
@@ -134,9 +160,15 @@ def test_golden_055_relocate_reduces_cross_aisle():
     plan = derive_consolidation_plan(
         material_code=MATERIAL,
         batch_no=BATCH,
-        profile=InventoryProfile(snapshot_present=True, plates_by_aisle={"01": 30, "02": 20, "03": 10}),
+        profile=InventoryProfile(
+            snapshot_present=True,
+            plates_by_aisle={"01": 30, "02": 20, "03": 10},
+            batches_by_aisle={"01": {OTHER}, "02": {BATCH, OTHER}, "03": {BATCH}},
+        ),
         batch_plates_by_aisle={"02": 10, "03": 10},
         available={"01": 100, "02": 100, "03": 100},
+        batch_locations_by_aisle=_batch_locations({"02": 10, "03": 10}),
+        material_locations_by_aisle=_material_locations(["01", "02", "03"]),
     )
     assert plan.plan is not None
     before = plan.plan["expected_cross_aisle"]["before"]  # 3

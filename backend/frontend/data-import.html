@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>② 数据导入页 · 成品库位智能推荐</title>
+<link rel="icon" href="data:,">
 <link rel="stylesheet" href="assets/styles.css">
 </head>
 <body data-page="p2">
@@ -99,6 +100,8 @@
   const wrapEl = document.getElementById('importReceiptWrap');
   if (!dataTime || !receiptEl || !tableEl || !wrapEl) return;
 
+  const esc = (s) => window.escapeHtml(s);   // 回执字段来自后端，仍按不可信处理（防注入）。
+
   dataTime.value = new Date().toISOString().slice(0, 10);   // 时点默认当天（spec「数据时点标注与导入即基准」）
 
   const files = {};        // file_type -> { filename, content_base64 }
@@ -157,8 +160,8 @@
     receipt.files.forEach(f => {
       const ok = f.status === 'PASSED';
       rows.push(
-        '<tr><td>' + f.file_type + ' · ' + f.filename + '</td>' +
-        '<td>' + f.rows + '</td><td>' + f.fields_hit + '</td><td>' + f.anomalies + '</td>' +
+        '<tr><td>' + esc(f.file_type) + ' · ' + esc(f.filename) + '</td>' +
+        '<td>' + f.rows + '</td><td>' + f.fields_hit + '</td><td>' + esc(f.anomalies) + '</td>' +
         '<td><span class="pill ' + (ok ? 'ok' : 'red') + '">' + (ok ? '通过' : '失败') + '</span></td></tr>'
       );
     });

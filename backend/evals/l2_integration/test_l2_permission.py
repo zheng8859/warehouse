@@ -14,6 +14,7 @@ import json
 
 import pytest
 
+from app.core.config import settings
 from app.core.enums import JobStatus, JobType, Role
 from evals.eval_utils import assert_no_pii
 from tests.logic.conftest import DEFAULT_WEIGHTS, AisleSpec, JobOrderSpec, MaterialSpec
@@ -147,8 +148,9 @@ def test_golden_023_redact_leaves_no_forbidden_fields():
     assert out["qty"] == 10
 
 
-def test_golden_024_cold_path_off_makes_zero_external_calls(eval_api):
+def test_golden_024_cold_path_off_makes_zero_external_calls(eval_api, monkeypatch):
     """golden_024：冷路径开关关闭 → 端点先 409 守卫，外部 LLM 调用 = 0。"""
+    monkeypatch.setattr(settings, "cold_path_enabled", False)
     resp = eval_api.client.post(
         "/api/llm/kpi/interpret",
         json={"warehouse_id": WAREHOUSE},
