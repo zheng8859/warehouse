@@ -296,8 +296,8 @@ Go/No-Go 闸门：集中度达成率 ≥70% 且趋势向好 + 护栏全过 → G
 
 ## 十一、当前状态与待办
 
-**阶段一~七已收尾并打标（`v0.1.0` ~ `v0.7.0`；阶段七 `v0.7.0` 先行收尾、阶段六 `v0.6.0` 本次收尾）。
-剩余：阶段八（`32`/`33` · v1.0.0）。**
+**阶段一~八已收尾并打标（`v0.1.0` ~ `v0.7.0` → `v1.0.0`）。阶段八（`32`/`33` · 发布）本地发布链已走完，
+灰度部署（`33` Step 2/3）因无真实部署目标暂缓 —— 详见下「阶段八」与「未完成」。**
 
 **阶段一（`v0.1.0`）**：`openspec/` 已初始化且 `config.yaml` 已填 · `backend/` 骨架 · 本文件 ·
 `CONTEXT.md` · `git init`（`main` 分支，origin = 本地裸仓库 `D:\成品库位智能推荐\warehouse-origin.git`）·
@@ -400,9 +400,26 @@ P0 护栏「台账完整性 / 决策可追溯 / 出域=0」立即阻断）；L1 
 （2026-09-16 定）；`kpi_snapshots` 表 / 实体 / 实体测试保留为占位，不实现周期计算层与
 `/api/kpi/snapshot`。
 
+**阶段八（`32`/`33` · 发布 · 本地发布链已收尾 `v1.0.0`）**：`32` 全链路验收 + 安全审计 ——
+`acceptance-checklist.md`（8 功能页 100% / 四条旅程 4/4）、`reports/security-audit-report.md`
+（**A**：0 Critical / 0 High / 出域=0；1 中危 XSS + 1 低危 favicon 已修，`fix(ui)` `8f192e6`）、
+Evals 基线对比 Go（零劣化，`fix(eval)` `4a1e0d1`）、`acceptance-signoff.md`（发布建议「可以发布」）、
+`v1.0.0-rc.1` 打标。`33` 发布与复盘 —— Step 0 `/no-mistakes` 安全闸门（测试全过 / Evals Go / 审计 A /
+无硬编码密钥 / 回滚预案可查）、Step 1 `/ship`（`phase-8/ship` → `main` `--no-ff` 合并 `444d147` +
+`CHANGELOG.md` 156 条按 Conventional Commits 分组 + 打 `v1.0.0`）、Step 4 `/retro`
+（`retros/v1.0-retro.md` 四部分）、Step 5 推送（`git push origin main --tags`，10 tag 全推）。
+**1457 passed**（全量，零回归）。
+
+**阶段八跟进 · 「一键关闭推荐→退均分」运维开关已落地（`19` §4.5）**：`recommend_enabled`
+配置项（`app/core/config.py`）+ `RecommendationDisabled`（409）+ `require_recommend_enabled`
+守卫（`app/api/deps.py`）+ 挂在 `POST /api/allocate/batch` 端点（声明在权限依赖之前，开关关闭
+先答 409「推荐关了去人工均分」再答 403「够不够格」）。关闭即「停止推荐、退回 WMS 人工均分」，
+作业不中断、台账继续写 —— 功能开关式回滚，不删历史台账。**1458 passed**（全量，零回归）。
+
 **未完成**：
 
-- 阶段八（`32`/`33` · v1.0.0-rc.1 / v1.0.0）：全链路验收 + 安全审计 / 灰度发布 + 复盘
+- 灰度部署（`33` Step 2/3 `/land-and-deploy` + `/canary`）：单厂试点、0 实时接口、本地 SQLite、
+  无真实部署目标（目标机 SSH + Docker 缺失），灰度待有目标机后补跑，或按 `19` §3 独立部署形态做流程演练
 
 ### pre-commit 钩子：装之前先读这条
 
