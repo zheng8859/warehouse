@@ -14,8 +14,8 @@
 |---|---|
 | 领域术语（中英文 + 一句话定义） | `CONTEXT.md` |
 | 项目约束的完整版（给 OpenSpec 产物用） | `openspec/config.yaml` 的 `context` 字段 |
-| 设计与事实来源（**不在本仓库内**） | `D:\成品库位智能推荐\产品设计\` 下的 `00`、`09`~`25` 号文档 |
-| 工具链、阶段划分、质量门禁 | `D:\成品库位智能推荐\产品设计\00-总体开发方案.md` |
+| 设计与事实来源（**不在本仓库内**） | `<工作区>\产品设计\` 下的 `00`、`09`~`25` 号文档 |
+| 工具链、阶段划分、质量门禁 | `<工作区>\产品设计\00-总体开发方案.md` |
 | 数据模型 23 实体 / 11 枚举 | `17-数据模型设计.md` |
 
 **设计文档是事实来源，代码是它的派生物。** 设计文档与代码冲突时，先确认哪个对，不要默认改代码。
@@ -300,7 +300,7 @@ Go/No-Go 闸门：集中度达成率 ≥70% 且趋势向好 + 护栏全过 → G
 灰度部署（`33` Step 2/3）与运行时一键 toggle 端点经确认**不做**，详见下「决定不做」。**
 
 **阶段一（`v0.1.0`）**：`openspec/` 已初始化且 `config.yaml` 已填 · `backend/` 骨架 · 本文件 ·
-`CONTEXT.md` · `git init`（`main` 分支，origin = 本地裸仓库 `D:\成品库位智能推荐\warehouse-origin.git`；2026-09-16 增 `github` 远端 `https://github.com/zheng8859/warehouse`，首次推 `main` + 10 tags）·
+`CONTEXT.md` · `git init`（`main` 分支，origin = 本地裸仓库 `<工作区>\warehouse-origin.git`；2026-09-16 增 `github` 远端 `https://github.com/zheng8859/warehouse`，首次推 `main` + 10 tags）·
 no-mistakes 已 `init`（二进制本机已存在，见第十二节）· graphify 已验证端到端可用（见第十三节）·
 新增 `env` scope（`00` §4.2 正本 + 校验脚本同步，见第六节）·
 venv（`backend/.venv`）已建、`requirements.txt` 已装 ·
@@ -455,13 +455,13 @@ PYTHONUTF8=1 pre-commit install --hook-type pre-commit --hook-type commit-msg --
 
 | 项 | 值 |
 |---|---|
-| 二进制 | `C:\Users\E0764\.local\bin\no-mistakes.exe`（**PATH 上已有，2026-08-01 起就在**） |
+| 二进制 | `~\.local\bin\no-mistakes.exe`（**PATH 上已有，2026-08-01 起就在**） |
 | 构建源 | 课程资料包 `no-mistakes-main` 快照（Jul 25，552 个 .go 文件） |
-| Go 工具链 | `D:\tools\go`（绿色解压，未改系统 PATH；仅重建/升级时用得上） |
-| 数据目录 | `C:\Users\E0764\.no-mistakes`（用户级） |
-| **origin** | `D:\成品库位智能推荐\warehouse-origin.git`（本地裸仓库 —— 本机 `github.com` 不通） |
-| gate | `C:\Users\E0764\.no-mistakes\repos\da317198e22a.git` |
-| skill | `C:\Users\E0764\.claude\skills\no-mistakes\`（**用户级，全机器可用**） |
+| Go 工具链 | `<Go 工具链>`（绿色解压，未改系统 PATH；仅重建/升级时用得上） |
+| 数据目录 | `~\.no-mistakes`（用户级） |
+| **origin** | `<工作区>\warehouse-origin.git`（本地裸仓库） |
+| gate | `~\.no-mistakes\repos\da317198e22a.git` |
+| skill | `~\.claude\skills\no-mistakes\`（**用户级，全机器可用**） |
 
 推送流程：`git push no-mistakes <branch>` —— 推到本地 gate，触发流水线（审查/测试/lint/文档/PR）。
 
@@ -488,7 +488,7 @@ PYTHONUTF8=1 pre-commit install --hook-type pre-commit --hook-type commit-msg --
 
 - **`intent.enabled: true`（全局默认开启）**：push 分支时它会**读取本机 Claude Code 的会话
   记录**，挑出产生该改动的会话，摘要成「用户意图」喂给各步骤的 agent。数据不出机器，
-  但读取范围是完整会话记录。要关就改 `C:\Users\E0764\.no-mistakes\config.yaml`。
+  但读取范围是完整会话记录。要关就改 `~\.no-mistakes\config.yaml`。
 - **常驻 daemon**：`no-mistakes daemon status` 查，`daemon stop` 停。
 - `gh` 未安装 → 流水线的 **PR / CI 环节不可用**（`doctor` 标为 optional）。gate 与本地
   流水线不受影响。
@@ -502,8 +502,8 @@ PYTHONUTF8=1 pre-commit install --hook-type pre-commit --hook-type commit-msg --
 
 | 项 | 值 |
 |---|---|
-| CLI | `C:\Users\E0764\.local\bin\graphify.exe`（0.9.25，已在 PATH） |
-| skill | `C:\Users\E0764\.claude\skills\graphify\`（用户级） |
+| CLI | `~\.local\bin\graphify.exe`（0.9.25，已在 PATH） |
+| skill | `~\.claude\skills\graphify\`（用户级） |
 | 产物 | `backend/graphify-out/` —— **已 gitignore**（见根 `.gitignore`） |
 
 ### 用法
