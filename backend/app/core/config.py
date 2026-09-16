@@ -115,6 +115,13 @@ class Settings(BaseSettings):
     #: `llm_timeout`，故上调到 10s（仍保留「单进程低频、不占写库」的护栏语义）。
     llm_request_timeout_s: float = 10.0
 
+    # ------------------------------------------------------------ 推荐开关（19 §4.5）
+    #: 核心推荐引擎总开关（功能开关式回滚，`19` §4.5）：关闭后 `POST /api/allocate/batch`
+    #: 拒绝出方案（409 `recommendation_disabled`），系统退回 WMS 原生的人工均分——作业
+    #: 不中断、台账继续写。与冷路径的 `cold_path_enabled` 是两个独立的开关：一个管
+    #: 「集中落位建议」，一个管「AI 辅助」。默认打开。
+    recommend_enabled: bool = True
+
     @field_validator("environment")
     @classmethod
     def _known_environment(cls, v: str) -> str:

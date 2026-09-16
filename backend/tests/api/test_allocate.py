@@ -712,6 +712,31 @@ def test_a_missing_snapshot_blocks_the_batch(api: Api) -> None:
     assert api.plan_rows() == ()
 
 
+def test_the_recommendation_switch_blocks_the_batch_when_off(api: Api, monkeypatch: pytest.MonkeyPatch) -> None:
+    """推荐开关关闭（`recommend_enabled=false`）⇒ 409 `recommendation_disabled`，零写入。
+
+    功能开关式回滚（`19` §4.5）：管理员一键关闭推荐开关后，系统退回**人工均分**（WMS 原生
+    行为，`19` §3.4「WMS 继续做均衡均分」），端点不产出方案 —— **不是**"实现一套均分分配
+    算法"（那会越界：本系统不接管落位）。开关守卫与冷路径 `require_cold_path_enabled` 同形：
+    关闭 = 能力整体不可用 → 409（可纠正：先开再调），而**不是** 200 + 空 `plans`（那会把
+    "推荐关了"伪装成"这批恰好没排上"）。
+
+    还要断言端点**整个没跑**（方案行、状态、批次号都没动）：守卫挂在依赖层，先于端点体，
+    一个写在端点内部（先取数、再检查）的实现同样回 409，但库里已经写进去了。
+    """
+    scenario = _capacity_scenario(api, orders=1)
+    (order_id,) = order_ids(scenario)
+    monkeypatch.setattr(settings, "recommend_enabled", False)
+
+    response = api.allocate([order_id])
+
+    assert response.status_code == 409
+    assert response.json()["error"] == "recommendation_disabled"
+    assert api.plan_rows() == ()
+    assert api.orders()[0].status is JobStatus.PENDING
+    assert api.orders()[0].bulk_batch_no is None
+
+
 # ------------------------------------------------------------------ 8.2 状态迁移与批次号回写
 
 def test_the_allocated_orders_are_marked_planned_with_the_batch_number(api: Api) -> None:

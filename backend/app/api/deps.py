@@ -32,7 +32,12 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.api.permissions import Permission, check
 from app.core.config import settings
 from app.core.enums import AccountStatus
-from app.core.errors import ColdPathDisabled, PermissionDenied, Unauthenticated
+from app.core.errors import (
+    ColdPathDisabled,
+    PermissionDenied,
+    RecommendationDisabled,
+    Unauthenticated,
+)
 from app.models.identity import Account
 
 #: 账号不可用时的统一说法。**不区分**「不存在」与「状态不是 active」：
@@ -142,4 +147,22 @@ def require_cold_path_enabled() -> None:
     if not settings.cold_path_enabled:
         raise ColdPathDisabled(
             "冷路径未开启（cold_path_enabled=false）—— 请管理员先经 POST /api/llm/toggle 开启"
+        )
+
+
+def require_recommend_enabled() -> None:
+    """推荐引擎总开关守卫（`19` §4.5）：关闭 → 409 `recommendation_disabled`。
+
+    关闭 = 「集中落位建议」能力整体关闭，是可纠正客户端错误（管理员恢复开启后再调）→
+    409；与冷路径 `require_cold_path_enabled` 同形，文案**只此一份** —— 前端据此分流
+    「推荐关了去人工均分」与「这一单排不出来」（后者是 `degrade_reason` 或
+    `BlockedMissingPrerequisite`，不是本异常）。
+
+    供批量分配端点 `POST /api/allocate/batch` 复用。开关只读 `settings.recommend_enabled`，
+    不新增 toggle 端点 —— 运维经配置/环境变量恢复（`19` §4.5 的预案是「关」而非「频繁切」）。
+    """
+    if not settings.recommend_enabled:
+        raise RecommendationDisabled(
+            "推荐引擎已关闭（recommend_enabled=false）—— 系统退回人工均分，"
+            "请由管理员恢复开启后再调用批量分配"
         )

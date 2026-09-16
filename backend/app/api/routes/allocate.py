@@ -59,7 +59,7 @@ import sqlalchemy as sa
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db, require_permission
+from app.api.deps import get_db, require_permission, require_recommend_enabled
 from app.api.permissions import Permission
 from app.core.concurrency import bump_lock_version
 from app.core.config import settings
@@ -397,12 +397,16 @@ def _as_plan_item(
 def allocate_batch_plans(
     payload: BatchAllocateRequest,
     session: Session = Depends(get_db),
+    _recommend_on: None = Depends(require_recommend_enabled),
     _authorized: None = Depends(require_permission(Permission.INBOUND_OPERATE)),
 ) -> BatchAllocateResponse:
     """一次批量分配：定序 → 贪心选道 → 四级降级 → 组装理由并落库（`14` §3.4）。
 
     步骤与失败面（`design.md` D12 的失败/恢复表的端点侧）：
 
+    0. **总开关**：`recommend_enabled=false` ⇒ 409 `recommendation_disabled`，零写入
+       （`19` §4.5 功能开关式回滚，声明在权限依赖之前：开关关闭时先答 409「推荐关了去
+       人工均分」、再答 403「你够不够格」）
     1. **报文 → 可查的 id**：条数超过 50 / 形状不合法 / 重号 / 不存在 ⇒ 422，零写入。
        条数超限**拒绝并提示拆分、不截断**（8.5）—— 截断会让调用方以为超出的那些也分配了
     2. **状态**：有单不在 `PENDING` ⇒ **整批** 409，零写入（8.2 / D10 的「不部分成功」）

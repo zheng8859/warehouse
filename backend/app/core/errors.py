@@ -95,6 +95,19 @@ class ColdPathDisabled(DomainError):
     code = "cold_path_disabled"
 
 
+class RecommendationDisabled(DomainError):
+    """推荐引擎总开关关闭（`recommend_enabled=false`）—— 功能开关式回滚（`19` §4.5）。
+
+    与冷路径 `ColdPathDisabled` 同形：关闭 = 「集中落位建议」能力整体不可用 → 409
+    （前端据此提示管理员恢复开启）；引擎侧失败 = 「能力开了但这一单排不出来」是降级
+    （`degrade_reason`）或 `BlockedMissingPrerequisite`，不是本异常。两者不能都 409，
+    否则前端无法区分「推荐关了去人工均分」与「这一单排不出来」。
+    """
+
+    http_status = 409
+    code = "recommendation_disabled"
+
+
 def error_body(exc: DomainError) -> dict[str, Any]:
     """领域异常 → 响应体。**唯一定义处**。
 
