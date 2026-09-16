@@ -59,3 +59,6 @@ node_modules/
 # 注意：.claude/skills/ 与 .claude/commands/ 是 OpenSpec 集成，属项目配置，要入库。
 .claude/settings.local.json
 .gstack/
+
+# ---- 内部运行手册（含批号编码规则，不上公开仓库）----
+期初数据导入手册.md
